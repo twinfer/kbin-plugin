@@ -214,6 +214,11 @@ func TestExpressionParser(t *testing.T) {
 			expected: &IntLit{Value: 123, P: p(1)},
 		},
 		{
+			name:     "Hex integer literal",
+			input:    "0xAA",
+			expected: &IntLit{Value: 170, P: p(1)},
+		},
+		{
 			name:     "Float literal",
 			input:    "1.23",
 			expected: &FltLit{Value: 1.23, P: p(1)},

@@ -3,12 +3,14 @@ package cel
 
 import (
 	"fmt"
+	"strings"
 	"sync"
 
 	"github.com/google/cel-go/cel"
 	"github.com/google/cel-go/common/types"
 	"github.com/google/cel-go/common/types/ref"
 	"github.com/google/cel-go/common/types/traits"
+	"github.com/twinfer/kbin-plugin/pkg/expression"
 )
 
 // ExpressionPool caches compiled CEL expressions
@@ -41,8 +43,22 @@ func (e *ExpressionPool) GetExpression(exprStr string) (cel.Program, error) {
 	}
 	e.mu.RUnlock()
 
-	// Transform Kaitai expressions to CEL syntax
-	transformed := TransformKaitaiExpression(exprStr)
+	// 1. Parse Kaitai expression string to Kaitai AST
+	lexer := expression.NewExpressionLexer(strings.NewReader(exprStr))
+	parser := expression.NewExpressionParser(lexer)
+	kaitaiAST, pErr := parser.Parse()
+	if pErr != nil {
+		return nil, fmt.Errorf("failed to parse Kaitai expression '%s': %w. Parser errors: %s", exprStr, pErr, strings.Join(parser.Errors(), "; "))
+	}
+
+	// 2. Transform Kaitai AST to CEL string using ASTTransformer
+	transformer := NewASTTransformer() // Assuming NewASTTransformer is in the same 'cel' package
+	celExprStr, tErr := transformer.Transform(kaitaiAST)
+	if tErr != nil {
+		return nil, fmt.Errorf("failed to transform Kaitai AST to CEL for expression '%s': %w", exprStr, tErr)
+	}
+
+	transformed := celExprStr // Use the CEL string from ASTTransformer
 
 	// Extract variable names from the transformed expression
 	vars := extractVariables(transformed)
