@@ -286,6 +286,57 @@ func (*writerLib) CompileOptions() []cel.EnvOption {
 			),
 		),
 
+		// Signed integer BE writer functions
+		cel.Function("writeS2be",
+			cel.Overload("writes2be_writer_int", []*cel.Type{cel.AnyType, cel.IntType}, cel.BoolType,
+				cel.BinaryBinding(func(lhs, rhs ref.Val) ref.Val {
+					writer, ok1 := lhs.Value().(*kaitai.Writer)
+					val, ok2 := rhs.(types.Int)
+					if !ok1 || !ok2 {
+						return types.NewErr("invalid arguments to writeS2be")
+					}
+					err := writer.WriteS2be(int16(val))
+					if err != nil {
+						return types.NewErr("failed to write s2be: %v", err)
+					}
+					return types.Bool(true)
+				}),
+			),
+		),
+
+		cel.Function("writeS4be",
+			cel.Overload("writes4be_writer_int", []*cel.Type{cel.AnyType, cel.IntType}, cel.BoolType,
+				cel.BinaryBinding(func(lhs, rhs ref.Val) ref.Val {
+					writer, ok1 := lhs.Value().(*kaitai.Writer)
+					val, ok2 := rhs.(types.Int)
+					if !ok1 || !ok2 {
+						return types.NewErr("invalid arguments to writeS4be")
+					}
+					err := writer.WriteS4be(int32(val))
+					if err != nil {
+						return types.NewErr("failed to write s4be: %v", err)
+					}
+					return types.Bool(true)
+				}),
+			),
+		),
+
+		cel.Function("writeS8be",
+			cel.Overload("writes8be_writer_int", []*cel.Type{cel.AnyType, cel.IntType}, cel.BoolType,
+				cel.BinaryBinding(func(lhs, rhs ref.Val) ref.Val {
+					writer, ok1 := lhs.Value().(*kaitai.Writer)
+					val, ok2 := rhs.(types.Int)
+					if !ok1 || !ok2 {
+						return types.NewErr("invalid arguments to writeS8be")
+					}
+					err := writer.WriteS8be(int64(val))
+					if err != nil {
+						return types.NewErr("failed to write s8be: %v", err)
+					}
+					return types.Bool(true)
+				}),
+			),
+		),
 		// Unified write function
 		cel.Function("write",
 			cel.Overload("write_writer_string_any", []*cel.Type{cel.AnyType, cel.StringType, cel.AnyType}, cel.BoolType,

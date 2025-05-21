@@ -163,9 +163,29 @@ func (k *KaitaiSerializer) serializeType(goCtx context.Context, typeName string,
 		Root:     sCtx.Root,
 	}
 
+	// Pre-evaluate instances for this type and add them to the fieldCtx.Children
+	// This makes them available for expressions in seq items (if, size, repeat-expr, etc.)
+	if typeObj.Instances != nil {
+		k.logger.DebugContext(goCtx, "Pre-evaluating instances for type", "type_name", typeName, "instance_count", len(typeObj.Instances))
+		for instName, instDef := range typeObj.Instances {
+			// Ensure that the activation for instance evaluation uses the current fieldCtx,
+			// which already contains the dataMap (input fields for this type).
+			instValue, err := k.evaluateExpression(goCtx, instDef.Value, fieldCtx)
+			if err != nil {
+				// It's possible an instance depends on another instance not yet evaluated.
+				// A full solution requires topological sort of instances.
+				// For now, log a warning and continue; subsequent expressions might fail.
+				k.logger.WarnContext(goCtx, "Failed to pre-evaluate instance, it might depend on another instance or be complex", "type_name", typeName, "instance_name", instName, "error", err)
+				// Do not add to children if evaluation failed, to prevent CEL errors with nil/error values.
+			} else {
+				fieldCtx.Children[instName] = instValue
+				k.logger.DebugContext(goCtx, "Pre-evaluated instance and added to context", "type_name", typeName, "instance_name", instName, "value", instValue)
+			}
+		}
+	}
+
 	// Use helper to serialize sequence
-	err := k.serializeSequence(goCtx, typeName, typeObj.Seq, dataMap, fieldCtx)
-	if err != nil {
+	if err := k.serializeSequence(goCtx, typeName, typeObj.Seq, dataMap, fieldCtx); err != nil {
 		return err
 	}
 
@@ -210,6 +230,11 @@ func (k *KaitaiSerializer) serializeAdHocSwitchType(goCtx context.Context, typeN
 
 // serializeSequence processes a list of sequence items for a given type.
 func (k *KaitaiSerializer) serializeSequence(goCtx context.Context, typeName string, sequence []SequenceItem, dataMap map[string]any, typeCtx *SerializeContext) error {
+	// At this point, typeCtx.Children should contain both the fields from dataMap
+	// and any pre-evaluated instances for the current 'typeName'.
+	// If instances were not pre-evaluated in serializeType, they would need to be handled here
+	// with care for dependencies.
+
 	for _, seq := range sequence {
 		// Handle switch types
 		if seq.Type == "switch" {

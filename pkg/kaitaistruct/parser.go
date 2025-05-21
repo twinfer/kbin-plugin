@@ -287,7 +287,10 @@ func (k *KaitaiInterpreter) parseType(ctx context.Context, typeName string, stre
 					return nil, fmt.Errorf("evaluating instance '%s' in type '%s': %w",
 						name, typeName, err)
 				}
-				result.Children[name] = val
+				result.Children[name] = val // Store the ParsedData for the final result
+				if val != nil {
+					typeEvalCtx.Children[name] = val.Value // Add the primitive value to the current eval context for subsequent instances
+				}
 			}
 		}
 

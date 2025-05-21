@@ -179,8 +179,7 @@ func extractVariables(expr string) []string {
 
 	// Skip known function names and keywords
 	keywords := map[string]bool{
-		"true": true, "false": true, "null": true,
-		// Removed "size", "length", "count" as they can be field/instance names
+		"true": true, "false": true, "null": true, // Keep basic literals/keywords
 		"to_s": true, "to_i": true, "to_f": true,
 		"bitAnd": true, "bitOr": true, "bitXor": true, "bitNot": true,
 		"bitShiftLeft": true, "bitShiftRight": true,
@@ -188,6 +187,11 @@ func extractVariables(expr string) []string {
 		"startsWith": true, "endsWith": true, "contains": true,
 		"substring": true, "reverse": true,
 		"at": true, "slice": true, "sliceEnd": true, "sliceRange": true,
+		"size": true, "length": true, "count": true, // These are also function names
+		"abs": true, "min": true, "max": true, "ceil": true, "floor": true, "round": true, // Math functions
+		"processXOR": true, "processZlib": true, "processRotateLeft": true, "processRotateRight": true, // Process functions
+		"encodeString": true, "decodeString": true, // Encoding functions
+		"writerPos": true, "writeBytes": true, "writeU1": true, "writeU2le": true, "writeU4le": true, "writeU8le": true, "writeS1": true, "writeS2le": true, "writeS4le": true, "writeS8le": true, "writeF4le": true, "writeF8le": true, "writeU2be": true, "writeU4be": true, "writeU8be": true, "writeF4be": true, "writeF8be": true, "write": true, "newWriter": true, "writerBuffer": true, // Writer functions
 		"input": true, "_io": true, "ternary": true,
 	}
 

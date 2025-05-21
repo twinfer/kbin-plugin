@@ -1,6 +1,8 @@
 package cel
 
 import (
+	"math"
+
 	"github.com/google/cel-go/cel"
 	"github.com/google/cel-go/common/types"
 	"github.com/google/cel-go/common/types/ref"
@@ -111,7 +113,7 @@ func (*mathLib) CompileOptions() []cel.EnvOption {
 					if !ok {
 						return types.NewErr("expected double argument to ceil, got %T", val)
 					}
-					return types.Double(float64(int64(x + 0.999999999)))
+					return types.Double(math.Ceil(float64(x)))
 				}),
 			),
 		),
@@ -124,7 +126,7 @@ func (*mathLib) CompileOptions() []cel.EnvOption {
 					if !ok {
 						return types.NewErr("expected double argument to floor, got %T", val)
 					}
-					return types.Double(float64(int64(x)))
+					return types.Double(math.Floor(float64(x)))
 				}),
 			),
 		),
@@ -137,11 +139,7 @@ func (*mathLib) CompileOptions() []cel.EnvOption {
 					if !ok {
 						return types.NewErr("expected double argument to round, got %T", val)
 					}
-					// Round to nearest integer
-					if x < 0 {
-						return types.Double(float64(int64(x - 0.5)))
-					}
-					return types.Double(float64(int64(x + 0.5)))
+					return types.Double(math.Round(float64(x)))
 				}),
 			),
 		),
