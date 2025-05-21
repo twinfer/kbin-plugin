@@ -16,9 +16,7 @@ benthos-kaitai
 vendor/
 
 # Generated files
-test/
-testdata/
-tests/
+
 
 # IDE files
 .idea/

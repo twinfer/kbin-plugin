@@ -1,10 +1,12 @@
 package kaitaistruct
 
 import (
+	"context"
 	"fmt"
 	"strings"
 )
 
+// TODO: Add context.Context to ResolveType and pass it to evaluateExpression
 // SwitchTypeSelector handles type selection in switch cases
 type SwitchTypeSelector struct {
 	schema      *KaitaiSchema
@@ -30,24 +32,35 @@ func NewSwitchTypeSelector(switchType any, schema *KaitaiSchema) (*SwitchTypeSel
 		}
 
 		// Get cases
-		if c, ok := m["cases"].(map[string]any); ok {
+		casesValue, casesOk := m["cases"]
+		if !casesOk {
+			return nil, fmt.Errorf("missing 'cases' in switch definition")
+		}
+
+		// Handle cases being map[string]any or map[string]string
+		if cMapAny, ok := casesValue.(map[string]any); ok {
 			cases = make(map[string]string)
-			for k, v := range c {
+			for k, v := range cMapAny {
 				if typeStr, ok := v.(string); ok {
 					cases[k] = typeStr
 				} else {
 					return nil, fmt.Errorf("case value must be a string, got %T", v)
 				}
 			}
-
-			// Check for default case
-			if defaultCase, ok := c["_"]; ok {
-				if defaultStr, ok := defaultCase.(string); ok {
-					defaultType = defaultStr
-				}
-			}
+		} else if cMapStr, ok := casesValue.(map[string]string); ok {
+			cases = cMapStr // Directly assign if it's already map[string]string
 		} else {
-			return nil, fmt.Errorf("cases must be a map, got %T", m["cases"])
+			return nil, fmt.Errorf("cases must be a map[string]any or map[string]string, got %T", casesValue)
+		}
+
+		// Check for default case within the now-standardized `cases` map
+		if defaultCaseStr, ok := cases["_"]; ok {
+			// No need to check type again, as `cases` is now map[string]string
+			defaultType = defaultCaseStr
+		} else {
+			// If no explicit default case "_" is found, it means there's no default.
+			// The ResolveType method will handle this if no other case matches.
+			// We don't need to set defaultType to "" explicitly here, as it's already the zero value.
 		}
 	} else {
 		return nil, fmt.Errorf("switch type must be a map, got %T", switchType)
@@ -62,9 +75,9 @@ func NewSwitchTypeSelector(switchType any, schema *KaitaiSchema) (*SwitchTypeSel
 }
 
 // ResolveType resolves the actual type based on the switch value
-func (s *SwitchTypeSelector) ResolveType(ctx *ParseContext, interpreter *KaitaiInterpreter) (string, error) {
+func (s *SwitchTypeSelector) ResolveType(goCtx context.Context, pCtx *ParseContext, interpreter *KaitaiInterpreter) (string, error) {
 	// Evaluate switch-on expression
-	result, err := interpreter.evaluateExpression(s.switchOn, ctx)
+	result, err := interpreter.evaluateExpression(goCtx, s.switchOn, pCtx)
 	if err != nil {
 		return "", fmt.Errorf("failed to evaluate switch expression: %w", err)
 	}

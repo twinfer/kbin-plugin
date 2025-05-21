@@ -90,8 +90,8 @@ type SwitchType struct {
 	Cases    map[string]any `yaml:"cases"`
 }
 
-// helper function ParseKaitaiSchema parses a Kaitai Struct YAML schema into a KaitaiSchema struct.
-func ParseKaitaiSchema(data []byte) (*KaitaiSchema, error) {
+// NewKaitaiSchemaFromYAML parses a Kaitai Struct YAML schema into a KaitaiSchema struct.
+func NewKaitaiSchemaFromYAML(data []byte) (*KaitaiSchema, error) {
 	var schema KaitaiSchema
 	if err := yaml.Unmarshal(data, &schema); err != nil {
 		return nil, err

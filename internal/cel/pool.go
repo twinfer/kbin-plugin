@@ -3,12 +3,14 @@ package cel
 
 import (
 	"fmt"
+	"strings"
 	"sync"
 
 	"github.com/google/cel-go/cel"
 	"github.com/google/cel-go/common/types"
 	"github.com/google/cel-go/common/types/ref"
 	"github.com/google/cel-go/common/types/traits"
+	"github.com/twinfer/kbin-plugin/pkg/expression"
 )
 
 // ExpressionPool caches compiled CEL expressions
@@ -41,8 +43,22 @@ func (e *ExpressionPool) GetExpression(exprStr string) (cel.Program, error) {
 	}
 	e.mu.RUnlock()
 
-	// Transform Kaitai expressions to CEL syntax
-	transformed := TransformKaitaiExpression(exprStr)
+	// 1. Parse Kaitai expression string to Kaitai AST
+	lexer := expression.NewExpressionLexer(strings.NewReader(exprStr))
+	parser := expression.NewExpressionParser(lexer)
+	kaitaiAST, pErr := parser.Parse()
+	if pErr != nil {
+		return nil, fmt.Errorf("failed to parse Kaitai expression '%s': %w. Parser errors: %s", exprStr, pErr, strings.Join(parser.Errors(), "; "))
+	}
+
+	// 2. Transform Kaitai AST to CEL string using ASTTransformer
+	transformer := NewASTTransformer() // Assuming NewASTTransformer is in the same 'cel' package
+	celExprStr, tErr := transformer.Transform(kaitaiAST)
+	if tErr != nil {
+		return nil, fmt.Errorf("failed to transform Kaitai AST to CEL for expression '%s': %w", exprStr, tErr)
+	}
+
+	transformed := celExprStr // Use the CEL string from ASTTransformer
 
 	// Extract variable names from the transformed expression
 	vars := extractVariables(transformed)
@@ -163,8 +179,7 @@ func extractVariables(expr string) []string {
 
 	// Skip known function names and keywords
 	keywords := map[string]bool{
-		"true": true, "false": true, "null": true,
-		"size": true, "length": true, "count": true,
+		"true": true, "false": true, "null": true, // Keep basic literals/keywords
 		"to_s": true, "to_i": true, "to_f": true,
 		"bitAnd": true, "bitOr": true, "bitXor": true, "bitNot": true,
 		"bitShiftLeft": true, "bitShiftRight": true,
@@ -172,6 +187,11 @@ func extractVariables(expr string) []string {
 		"startsWith": true, "endsWith": true, "contains": true,
 		"substring": true, "reverse": true,
 		"at": true, "slice": true, "sliceEnd": true, "sliceRange": true,
+		"size": true, "length": true, "count": true, // These are also function names
+		"abs": true, "min": true, "max": true, "ceil": true, "floor": true, "round": true, // Math functions
+		"processXOR": true, "processZlib": true, "processRotateLeft": true, "processRotateRight": true, // Process functions
+		"encodeString": true, "decodeString": true, // Encoding functions
+		"writerPos": true, "writeBytes": true, "writeU1": true, "writeU2le": true, "writeU4le": true, "writeU8le": true, "writeS1": true, "writeS2le": true, "writeS4le": true, "writeS8le": true, "writeF4le": true, "writeF8le": true, "writeU2be": true, "writeU4be": true, "writeU8be": true, "writeF4be": true, "writeF8be": true, "write": true, "newWriter": true, "writerBuffer": true, // Writer functions
 		"input": true, "_io": true, "ternary": true,
 	}
 

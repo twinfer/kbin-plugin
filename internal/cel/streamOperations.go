@@ -33,8 +33,8 @@ func (*streamLib) CompileOptions() []cel.EnvOption {
 		),
 
 		// Stream size
-		cel.Function("size",
-			cel.Overload("size_stream", []*cel.Type{cel.AnyType}, cel.IntType,
+		cel.Function("stream_size",
+			cel.Overload("stream_size_any", []*cel.Type{cel.AnyType}, cel.IntType,
 				cel.UnaryBinding(func(val ref.Val) ref.Val {
 					if stream, ok := val.Value().(*kaitai.Stream); ok {
 						size, err := stream.Size()
