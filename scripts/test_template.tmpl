@@ -36,12 +36,33 @@ func structToMapForSerializerFor{{.StructName}}(t *testing.T, data any) map[stri
     require.NoError(t, err, "Failed to marshal KSC struct to JSON")
 
     var resultMap map[string]any
-    if err := json.Unmarshal(jsonData, &resultMap); err != nil {
+    if err := json.Unmarshal(jsonData, &resultMap); err != nil { // Unmarshal into a temporary map
         t.Logf("Warning: Could not unmarshal KSC struct directly to map for serializer (type: %T). Wrapping in '_value'. Error: %v", data, err)
         return map[string]any{"_value": data}
     }
-    return resultMap
+    return convertKeysToLowerRecursive(resultMap) // Convert keys before returningreturn convertKeysToLowerRecursive(resultMap) // Convert keys before returning
 }
+
+// convertKeysToLowerRecursive recursively converts map keys to lowercase.
+func convertKeysToLowerRecursive(data any) any {
+    if m, ok := data.(map[string]any); ok {
+        lowerMap := make(map[string]any)
+        for k, v := range m {
+            lowerMap[strings.ToLower(k)] = convertKeysToLowerRecursive(v)
+        }
+        return lowerMap
+    }
+    if s, ok := data.([]any); ok {
+        lowerSlice := make([]any, len(s))
+        for i, v := range s {
+            lowerSlice[i] = convertKeysToLowerRecursive(v)
+        }
+        return lowerSlice
+    }
+    return data
+}
+
+
 
 
 func TestParse_{{.StructName}}(t *testing.T) {

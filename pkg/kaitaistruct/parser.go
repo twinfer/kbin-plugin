@@ -224,12 +224,19 @@ func (k *KaitaiInterpreter) parseType(ctx context.Context, typeName string, stre
 	var found bool
 
 	if typeName == k.schema.Meta.ID {
+		// This is the root type being parsed directly (not as a field of another type)
+		// Its parent is effectively nil in terms of Kaitai's _parent, and its root is itself.
+		// The rootCtx is already on the valueStack.
+		if len(k.valueStack) == 0 { // Should not happen if Parse set up rootCtx
+			return nil, fmt.Errorf("internal error: valueStack empty when parsing root type sequence for '%s'", typeName)
+		}
+		currentRootCtx := k.valueStack[0] // This is the root ParseContext
 		// Parse root level sequence
 		evalCtx := &ParseContext{
 			Children: make(map[string]any),
 			IO:       stream,
-			Parent:   k.valueStack[len(k.valueStack)-1],
-			Root:     k.valueStack[0].Root,
+			Parent:   nil, // Root level has no _parent in the Kaitai sense of a containing user type
+			Root:     currentRootCtx,
 		}
 
 		// Parse sequence fields
@@ -281,16 +288,55 @@ func (k *KaitaiInterpreter) parseType(ctx context.Context, typeName string, stre
 
 		// Process instances if any
 		if typeObj.Instances != nil {
-			for name, inst := range typeObj.Instances { // TODO: Pass ctx to evaluateInstance
-				val, err := k.evaluateInstance(ctx, inst, typeEvalCtx) // Pass ctx
-				if err != nil {
-					return nil, fmt.Errorf("evaluating instance '%s' in type '%s': %w",
-						name, typeName, err)
+			k.logger.DebugContext(ctx, "Processing instances for type", "type_name", typeName, "instance_count", len(typeObj.Instances))
+
+			instancesToProcess := make(map[string]InstanceDef)
+			for name, inst := range typeObj.Instances {
+				instancesToProcess[name] = inst
+				// Eagerly add instance definition to context so it can be referenced if needed,
+				// though its value will be evaluated. This is more for introspection.
+				// typeEvalCtx.Children[name] = inst // This might be too early or confusing for CEL
+			}
+
+			maxPasses := len(instancesToProcess) + 2 // Allow a couple of extra passes for dependencies
+			processedInLastPass := -1
+
+			for pass := 0; pass < maxPasses && len(instancesToProcess) > 0 && processedInLastPass != 0; pass++ {
+				k.logger.DebugContext(ctx, "Instance evaluation pass", "type_name", typeName, "pass_num", pass+1, "remaining_instances", len(instancesToProcess))
+				processedInThisPass := 0
+				successfullyProcessedThisPass := make(map[string]bool)
+
+				for name, inst := range instancesToProcess {
+					val, err := k.evaluateInstance(ctx, inst, typeEvalCtx)
+					if err != nil {
+						// If error is due to missing attribute, it might be a dependency not yet evaluated.
+						// A more sophisticated check could inspect the error for "no such attribute".
+						// For now, we log and hope a subsequent pass resolves it.
+						// If the error is persistent (not a dependency issue), it will eventually fail.
+						k.logger.DebugContext(ctx, "Instance evaluation attempt failed (may retry)", "type_name", typeName, "instance_name", name, "pass", pass+1, "error", err)
+
+						// A more sophisticated check could inspect the error for "no such attribute".
+					} else {
+						k.logger.DebugContext(ctx, "Instance evaluated successfully", "type_name", typeName, "instance_name", name, "value", val.Value)
+						result.Children[name] = val // Store the ParsedData for the final result
+						if val != nil {
+							typeEvalCtx.Children[name] = val.Value // Add to current eval context
+						}
+						successfullyProcessedThisPass[name] = true
+						processedInThisPass++
+					}
 				}
-				result.Children[name] = val // Store the ParsedData for the final result
-				if val != nil {
-					typeEvalCtx.Children[name] = val.Value // Add the primitive value to the current eval context for subsequent instances
+				for name := range successfullyProcessedThisPass {
+					delete(instancesToProcess, name)
 				}
+				processedInLastPass = processedInThisPass
+			}
+			if len(instancesToProcess) > 0 {
+				remainingInstanceNames := make([]string, 0, len(instancesToProcess))
+				for name := range instancesToProcess {
+					remainingInstanceNames = append(remainingInstanceNames, name)
+				}
+				return nil, fmt.Errorf("failed to evaluate all instances for type '%s' after %d passes; remaining: %v. Check for circular dependencies or unresolvable expressions.", typeName, maxPasses-1, strings.Join(remainingInstanceNames, ", "))
 			}
 		}
 
