@@ -441,9 +441,9 @@ func TestSerialize_BuiltinTypes(t *testing.T) {
 		"val_u1":             uint8(0x12),
 		"val_u2le":           uint16(0x3456),
 		"val_u4be":           uint32(0x789ABCDE),
-		"val_s1":             int8(-1),  // 0xFF
-		"val_s2be":           int16(-2), // 0xFFFE
-		"val_s4le":           int32(0xAABBCCDD),
+		"val_s1":             int8(-1),           // 0xFF
+		"val_s2be":           int16(-2),          // 0xFFFE
+		"val_s4le":           int32(-1430532899), // This is 0xAABBCCDD in memory (little-endian: DD CC BB AA)
 		"val_f4le":           float32(1.5),
 		"val_f8be":           float64(2.75),
 		"val_u2_endian_meta": uint16(0x1122), // Should be 0x22, 0x11 (le)
@@ -461,7 +461,7 @@ func TestSerialize_BuiltinTypes(t *testing.T) {
 	// u2_meta(le): 22 11
 	expectedBytes := []byte{
 		0x12,
-		0x56, 0x34,
+		0x56, 0x34, // 0x3456
 		0x78, 0x9A, 0xBC, 0xDE,
 		0xFF,
 		0xFF, 0xFE,
@@ -596,28 +596,28 @@ func TestSerializeContext_AsActivation(t *testing.T) {
 	require.NoError(t, err)
 
 	// Check current fields
-	val, found, err := act.ResolveName("current_field")
+	val, found := act.ResolveName("current_field")
 	require.NoError(t, err)
 	require.True(t, found)
-	assert.EqualValues(t, 123, val.Value())
+	assert.EqualValues(t, 123, val)
 
 	// Check _writer
-	val, found, err = act.ResolveName("_writer")
+	val, found = act.ResolveName("_writer")
 	require.NoError(t, err)
 	require.True(t, found)
-	assert.Same(t, writer, val.Value())
+	assert.Same(t, writer, val)
 
 	// Check _root
-	val, found, err = act.ResolveName("_root")
+	val, found = act.ResolveName("_root")
 	require.NoError(t, err)
 	require.True(t, found)
-	assert.Equal(t, rootVal, val.Value()) // Should be the map[string]any
+	assert.Equal(t, rootVal, val) // Should be the map[string]any
 
 	// Check _parent
-	val, found, err = act.ResolveName("_parent")
+	val, found = act.ResolveName("_parent")
 	require.NoError(t, err)
 	require.True(t, found)
-	assert.Equal(t, parentVal, val.Value()) // Should be the map[string]any
+	assert.Equal(t, parentVal, val) // Should be the map[string]any
 }
 
 func TestReverseProcess_XOR(t *testing.T) {
@@ -639,4 +639,43 @@ func TestReverseProcess_XOR(t *testing.T) {
 	reversed, err := s.reverseProcess(context.Background(), data, processSpec, sCtx)
 	require.NoError(t, err)
 	assert.Equal(t, expected, reversed, "XOR is its own inverse")
+}
+
+func TestSerialize_RootTypeSpecifiedInMeta(t *testing.T) {
+	schema := &KaitaiSchema{
+		Meta: Meta{ID: "should_be_ignored_id", Endian: "le"}, // This ID should be ignored
+		Types: map[string]Type{
+			"my_actual_serialization_root": {
+				Seq: []SequenceItem{
+					{ID: "data_val", Type: "u2le"},
+					{ID: "another_val", Type: "s1"},
+				},
+			},
+			"should_be_ignored_id": { // This type definition matches Meta.ID but should be ignored
+				Seq: []SequenceItem{
+					{ID: "ignored_data", Type: "u4le"},
+				},
+			},
+		},
+		// Top-level Seq should also be ignored if RootType is specified in Meta
+		Seq: []SequenceItem{
+			{ID: "top_level_ignored", Type: "u1"},
+		},
+		RootType: "my_actual_serialization_root", // Explicitly set the root type for serialization
+	}
+	s := newTestSerializer(t, schema)
+
+	dataToSerialize := map[string]any{
+		"data_val":    uint16(0xABCD),
+		"another_val": int8(-1), // 0xFF
+	}
+
+	// Expected bytes based on "my_actual_serialization_root"
+	// u2le(0xABCD) -> CD AB
+	// s1(-1)       -> FF
+	expectedBytes := []byte{0xCD, 0xAB, 0xFF}
+
+	resultBytes, err := s.Serialize(context.Background(), dataToSerialize)
+	require.NoError(t, err, "Serialization should not fail")
+	assert.Equal(t, expectedBytes, resultBytes, "Serialized bytes should match the structure of Meta.RootType")
 }

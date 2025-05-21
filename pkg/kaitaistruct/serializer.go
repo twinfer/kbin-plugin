@@ -135,13 +135,8 @@ func (k *KaitaiSerializer) serializeType(goCtx context.Context, typeName string,
 		if !ok {
 			return fmt.Errorf("expected map for root type, got %T", data)
 		}
-
-		// Serialize sequence fields
-		for _, seq := range k.schema.Seq {
-			if err := k.serializeField(goCtx, seq, dataMap[seq.ID], sCtx); err != nil {
-				return fmt.Errorf("serializing field '%s' in root type '%s': %w", seq.ID, typeName, err)
-			}
-		}
+		// Use helper to serialize sequence
+		return k.serializeSequence(goCtx, typeName, k.schema.Seq, dataMap, sCtx)
 
 		return nil
 	}
@@ -168,50 +163,12 @@ func (k *KaitaiSerializer) serializeType(goCtx context.Context, typeName string,
 		Root:     sCtx.Root,
 	}
 
-	// Serialize sequence fields
-	for _, seq := range typeObj.Seq {
-		// Handle switch types
-		if seq.Type == "switch" {
-			k.logger.DebugContext(goCtx, "Handling switch type for field", "field_id", seq.ID, "type_name", typeName)
-			// Resolve switch type
-			actualType, err := k.resolveSwitchTypeForSerialization(goCtx, seq.Switch, fieldCtx) // Pass fieldCtx which contains the necessary data for expression evaluation
-			if err != nil {
-				return fmt.Errorf("error resolving switch type for field '%s': %w", seq.ID, err)
-			}
-
-			// Override type for this field
-			seqCopy := seq
-			seqCopy.Type = actualType
-
-			// Serialize field with resolved type
-			fieldData, dataOk := dataMap[seq.ID]
-			if !dataOk && actualType != "" { // Allow empty if resolved type is effectively "skip" or not present
-				// This might be an error or expected, depending on schema. For now, log and continue if actualType is empty.
-				k.logger.WarnContext(goCtx, "Data for switch field not found, but type resolved", "field_id", seq.ID, "resolved_type", actualType)
-			}
-			if err := k.serializeField(goCtx, seqCopy, fieldData, fieldCtx); err != nil {
-				return fmt.Errorf("serializing switch field '%s' (resolved as '%s') in type '%s': %w", seq.ID, actualType, typeName, err)
-			}
-			continue
-		}
-
-		// Handle normal field
-		fieldData, dataOk := dataMap[seq.ID]
-		if !dataOk {
-			// If field has an 'if' condition, it might be legitimately absent.
-			// Otherwise, this is likely an error or an optional field not provided.
-			if seq.IfExpr == "" { // Only warn if not conditional
-				k.logger.WarnContext(goCtx, "Data for non-conditional field not found in input map", "field_id", seq.ID, "type_name", typeName)
-			} else {
-				k.logger.DebugContext(goCtx, "Data for conditional field not found, will be handled by 'if' expr", "field_id", seq.ID, "type_name", typeName)
-			}
-			// `serializeField` will handle the `if` condition. If data is nil and `if` is false, it's skipped.
-			// If `if` is true and data is nil, `serializeField` might error depending on the field type.
-		}
-		if err := k.serializeField(goCtx, seq, fieldData, fieldCtx); err != nil {
-			return fmt.Errorf("error serializing field '%s' in type '%s': %w", seq.ID, typeName, err)
-		}
+	// Use helper to serialize sequence
+	err := k.serializeSequence(goCtx, typeName, typeObj.Seq, dataMap, fieldCtx)
+	if err != nil {
+		return err
 	}
+
 	k.logger.DebugContext(goCtx, "Finished serializing type", "type_name", typeName)
 	return nil
 }
@@ -224,39 +181,73 @@ func (k *KaitaiSerializer) serializeAdHocSwitchType(goCtx context.Context, typeN
 		return goCtx.Err()
 	default:
 	}
-	// Parse switch type format: switch-on:expression:default_type
-	parts := strings.Split(typeName, ":")
-	if len(parts) < 2 {
+	// Extract the expression part after "switch-on:"
+	expressionPart := strings.TrimPrefix(typeName, "switch-on:")
+	if expressionPart == typeName || expressionPart == "" { // Check if TrimPrefix did anything or if expr is empty
 		return fmt.Errorf("invalid switch type format: %s", typeName)
 	}
+	switchExpr := strings.TrimSpace(expressionPart)
 
 	// Evaluate switch expression
-	switchExpr := parts[1]
 	switchValue, err := k.evaluateExpression(goCtx, switchExpr, sCtx)
 	if err != nil {
 		return fmt.Errorf("evaluating ad-hoc switch expression '%s': %w", switchExpr, err)
 	}
 
 	// Determine actual type based on switch value
-	// TODO: Implement proper switch case mapping
-	var actualType string
-	if len(parts) > 2 {
-		actualType = parts[2] // Use default type from the typeName string
-	} else {
-		// This ad-hoc format doesn't have explicit cases in the typeName string itself.
-		// It relies on the expression evaluating to a type name or using the default.
-		// If the expression itself is supposed to yield the type name:
-		if svStr, ok := switchValue.(string); ok {
-			actualType = svStr
-		} else {
-			k.logger.ErrorContext(goCtx, "No default type in ad-hoc switch and expression did not yield type name", "type_name_switch", typeName, "switch_expr", switchExpr, "switch_value", switchValue)
-			return fmt.Errorf("no default type in ad-hoc switch '%s' and expression '%s' (value: %v) did not yield a type name", typeName, switchExpr, switchValue)
-		}
+	// For this ad-hoc format, the expression must evaluate to the type name string.
+	actualType, ok := switchValue.(string)
+	if !ok {
+		k.logger.ErrorContext(goCtx, "Ad-hoc switch expression did not evaluate to a string type name", "type_name_switch", typeName, "switch_expr", switchExpr, "evaluated_value_type", fmt.Sprintf("%T", switchValue))
+		return fmt.Errorf("ad-hoc switch expression '%s' for type '%s' did not evaluate to a string type name, got %T", switchExpr, typeName, switchValue)
 	}
+
 	k.logger.DebugContext(goCtx, "Ad-hoc switch resolved", "original_type_switch", typeName, "switch_expr", switchExpr, "switch_value", switchValue, "resolved_type", actualType)
 
 	// Serialize using actual type
 	return k.serializeType(goCtx, actualType, data, sCtx)
+}
+
+// serializeSequence processes a list of sequence items for a given type.
+func (k *KaitaiSerializer) serializeSequence(goCtx context.Context, typeName string, sequence []SequenceItem, dataMap map[string]any, typeCtx *SerializeContext) error {
+	for _, seq := range sequence {
+		// Handle switch types
+		if seq.Type == "switch" {
+			k.logger.DebugContext(goCtx, "Handling switch type for field", "field_id", seq.ID, "type_name", typeName)
+			// Resolve switch type
+			actualType, err := k.resolveSwitchTypeForSerialization(goCtx, seq.Switch, typeCtx)
+			if err != nil {
+				return fmt.Errorf("error resolving switch type for field '%s': %w", seq.ID, err)
+			}
+
+			// Override type for this field
+			seqCopy := seq
+			seqCopy.Type = actualType
+
+			fieldData, dataOk := dataMap[seq.ID]
+			if !dataOk && actualType != "" {
+				k.logger.WarnContext(goCtx, "Data for switch field not found, but type resolved", "field_id", seq.ID, "resolved_type", actualType)
+			}
+			if err := k.serializeField(goCtx, seqCopy, fieldData, typeCtx); err != nil {
+				return fmt.Errorf("serializing switch field '%s' (resolved as '%s') in type '%s': %w", seq.ID, actualType, typeName, err)
+			}
+			continue
+		}
+
+		// Handle normal field
+		fieldData, dataOk := dataMap[seq.ID]
+		if !dataOk {
+			if seq.IfExpr == "" {
+				k.logger.WarnContext(goCtx, "Data for non-conditional field not found in input map", "field_id", seq.ID, "type_name", typeName)
+			} else {
+				k.logger.DebugContext(goCtx, "Data for conditional field not found, will be handled by 'if' expr", "field_id", seq.ID, "type_name", typeName)
+			}
+		}
+		if err := k.serializeField(goCtx, seq, fieldData, typeCtx); err != nil {
+			return fmt.Errorf("error serializing field '%s' in type '%s': %w", seq.ID, typeName, err)
+		}
+	}
+	return nil
 }
 
 // serializeBuiltinType handles serialization of built-in types
@@ -461,6 +452,25 @@ func (k *KaitaiSerializer) serializeField(goCtx context.Context, field SequenceI
 		return k.serializeProcessedField(goCtx, field, data, sCtx)
 	}
 
+	// Explicitly handle fields defined with type: switch
+	if field.Type == "switch" {
+		k.logger.DebugContext(goCtx, "Field is a switch type, resolving actual type for serialization", "field_id", field.ID)
+		if field.Switch == nil {
+			// This case should ideally be caught by schema validation earlier,
+			// but good to have a check here.
+			return fmt.Errorf("field '%s' is of type 'switch' but has no 'switch-on' definition", field.ID)
+		}
+		// sCtx is the context of the parent type containing this switch field.
+		// The switch-on expression will be evaluated against sCtx.
+		actualType, err := k.resolveSwitchTypeForSerialization(goCtx, field.Switch, sCtx)
+		if err != nil {
+			return fmt.Errorf("resolving switch type for field '%s': %w", field.ID, err)
+		}
+		k.logger.DebugContext(goCtx, "Switch field resolved for serialization", "field_id", field.ID, "original_type", field.Type, "resolved_type", actualType)
+		// Now serialize using the resolved actualType.
+		return k.serializeType(goCtx, actualType, data, sCtx)
+	}
+
 	k.logger.DebugContext(goCtx, "Recursively serializing field's defined type", "field_id", field.ID, "defined_type", field.Type)
 
 	// Default: serialize as a type
@@ -492,6 +502,14 @@ func (k *KaitaiSerializer) serializeRepeatedField(goCtx context.Context, field S
 		case int64:
 			expectedCount = int(v)
 		case float64:
+			expectedCount = int(v)
+		case uint8:
+			expectedCount = int(v)
+		case uint16:
+			expectedCount = int(v)
+		case uint32:
+			expectedCount = int(v)
+		case uint64:
 			expectedCount = int(v)
 		default:
 			k.logger.ErrorContext(goCtx, "Repeat expression result is not a number", "field_id", field.ID, "result_type", fmt.Sprintf("%T", result))
@@ -640,6 +658,14 @@ func (k *KaitaiSerializer) serializeStringField(goCtx context.Context, field Seq
 			case int64:
 				size = int(r)
 			case float64:
+				size = int(r)
+			case uint8:
+				size = int(r)
+			case uint16:
+				size = int(r)
+			case uint32:
+				size = int(r)
+			case uint64:
 				size = int(r)
 			default:
 				k.logger.ErrorContext(goCtx, "Size expression for string field result is not a number", "field_id", field.ID, "size_expr", v, "result_type", fmt.Sprintf("%T", result))
@@ -892,67 +918,75 @@ func (k *KaitaiSerializer) evaluateExpression(goCtx context.Context, kaitaiExpr 
 
 // resolveSwitchTypeForSerialization resolves the actual type for a field based on a switch-on expression.
 func (k *KaitaiSerializer) resolveSwitchTypeForSerialization(goCtx context.Context, switchType any, sCtx *SerializeContext) (string, error) {
-	spec, err := NewSwitchTypeSelector(switchType, k.schema)
-	if err != nil {
-		return "", fmt.Errorf("failed to create switch type selector: %w", err)
-	}
-	if spec == nil || spec.switchOn == "" {
-		return "", fmt.Errorf("switch specification is nil")
-	}
-	k.logger.DebugContext(goCtx, "Resolving switch type for serialization", "switch_on_expr", spec.switchOn)
-
-	switchOnVal, err := k.evaluateExpression(goCtx, spec.switchOn, sCtx)
-	if err != nil {
-		return "", fmt.Errorf("evaluating switch-on expression '%s': %w", spec.switchOn, err)
-	}
-	k.logger.DebugContext(goCtx, "Switch-on expression evaluated", "switch_on_expr", spec.switchOn, "value", switchOnVal)
-
-	// If spec.cases is nil, it means the switch-on expression itself should evaluate to the type name.
-	if spec.cases == nil {
+	// Check if switchType is a direct expression string
+	if switchOnExprStr, isExprString := switchType.(string); isExprString {
+		k.logger.DebugContext(goCtx, "Resolving switch type from direct expression string", "switch_on_expr", switchOnExprStr)
+		switchOnVal, err := k.evaluateExpression(goCtx, switchOnExprStr, sCtx)
+		if err != nil {
+			return "", fmt.Errorf("evaluating switch-on expression string '%s': %w", switchOnExprStr, err)
+		}
 		typeNameResult, ok := switchOnVal.(string)
 		if !ok {
-			return "", fmt.Errorf("switch-on expression '%s' was expected to directly yield a type name (string), but got type %T (value: %v)", spec.switchOn, switchOnVal, switchOnVal)
+			return "", fmt.Errorf("switch-on expression string '%s' was expected to directly yield a type name (string), but got type %T (value: %v)", switchOnExprStr, switchOnVal, switchOnVal)
 		}
-		k.logger.DebugContext(goCtx, "Switch-on expression directly resolved to type", "switch_on_expr", spec.switchOn, "resolved_type", typeNameResult)
+		k.logger.DebugContext(goCtx, "Switch-on expression string directly resolved to type", "switch_on_expr", switchOnExprStr, "resolved_type", typeNameResult)
 		return typeNameResult, nil
-	}
+	} else {
+		// Proceed with map-based switch definition
+		spec, err := NewSwitchTypeSelector(switchType, k.schema)
+		if err != nil {
+			return "", fmt.Errorf("failed to create switch type selector: %w", err)
+		}
+		if spec == nil || spec.switchOn == "" {
+			return "", fmt.Errorf("switch specification is nil or switch-on expression is empty")
+		}
+		k.logger.DebugContext(goCtx, "Resolving switch type for serialization from map definition", "switch_on_expr", spec.switchOn)
 
-	// Convert switchOnVal to string for map lookup.
-	// Kaitai KSY usually implies string keys for cases, but values can be numbers.
-	// CEL evaluation might return int, bool, string. We need a consistent key.
-	var switchKey string
-	switch v := switchOnVal.(type) {
-	case string:
-		switchKey = v
-	case int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64:
-		switchKey = fmt.Sprintf("%d", v) // Convert numbers to string
-	case bool:
-		switchKey = fmt.Sprintf("%t", v) // Convert bools to "true" or "false"
-	case float32, float64:
-		// Kaitai cases usually don't use floats, but handle just in case
-		switchKey = fmt.Sprintf("%g", v)
-	default:
-		// If it's another type, try a generic string conversion. This might be error-prone.
-		k.logger.WarnContext(goCtx, "Switch-on value is of an unexpected type, attempting generic string conversion", "type", fmt.Sprintf("%T", v))
-		switchKey = fmt.Sprintf("%v", v)
-	}
+		switchOnVal, err := k.evaluateExpression(goCtx, spec.switchOn, sCtx)
+		if err != nil {
+			return "", fmt.Errorf("evaluating switch-on expression '%s': %w", spec.switchOn, err)
+		}
+		k.logger.DebugContext(goCtx, "Switch-on expression evaluated", "switch_on_expr", spec.switchOn, "value", switchOnVal)
 
-	if actualType, ok := spec.cases[switchKey]; ok {
-		k.logger.DebugContext(goCtx, "Switch case matched", "switch_key", switchKey, "resolved_type", actualType)
-		return actualType, nil
-	}
+		// If spec.cases is nil (should not happen if NewSwitchTypeSelector parsed a map with cases),
+		// this indicates an issue or a very specific KSY structure not yet fully handled.
+		// However, NewSwitchTypeSelector would likely error if 'cases' is missing from a map.
+		// For safety, we can check, but the primary path here is for map-based cases.
+		if spec.cases == nil {
+			return "", fmt.Errorf("internal error: switch specification parsed as map but cases are nil for switch-on '%s'", spec.switchOn)
+		}
 
-	// Check for default case "_"
-	if defaultType, ok := spec.cases["_"]; ok {
-		k.logger.DebugContext(goCtx, "Switch case not matched, using default", "switch_key", switchKey, "default_type", defaultType, "switch_on_expr", spec.switchOn, "evaluated_value", switchOnVal)
-		return defaultType, nil
-	}
+		var switchKey string
+		switch v := switchOnVal.(type) {
+		case string:
+			switchKey = v
+		case int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64:
+			switchKey = fmt.Sprintf("%d", v)
+		case bool:
+			switchKey = fmt.Sprintf("%t", v)
+		case float32, float64:
+			switchKey = fmt.Sprintf("%g", v)
+		default:
+			k.logger.WarnContext(goCtx, "Switch-on value is of an unexpected type for map case lookup, attempting generic string conversion", "type", fmt.Sprintf("%T", v))
+			switchKey = fmt.Sprintf("%v", v)
+		}
 
-	k.logger.ErrorContext(goCtx, "No case matched for switch-on value and no default case provided",
-		"switch_on_expr", spec.switchOn, "evaluated_value", switchOnVal,
-		"string_key_used", switchKey, "available_cases", fmt.Sprintf("%v", spec.cases))
-	return "", fmt.Errorf("no case matching switch value '%v' (key: '%s') for expression '%s' and no default '_' case was found",
-		switchOnVal, switchKey, spec.switchOn)
+		if actualType, ok := spec.cases[switchKey]; ok {
+			k.logger.DebugContext(goCtx, "Switch case matched", "switch_key", switchKey, "resolved_type", actualType)
+			return actualType, nil
+		}
+
+		if defaultType, ok := spec.cases["_"]; ok {
+			k.logger.DebugContext(goCtx, "Switch case not matched, using default", "switch_key", switchKey, "default_type", defaultType, "switch_on_expr", spec.switchOn, "evaluated_value", switchOnVal)
+			return defaultType, nil
+		}
+
+		k.logger.ErrorContext(goCtx, "No case matched for switch-on value and no default case provided",
+			"switch_on_expr", spec.switchOn, "evaluated_value", switchOnVal,
+			"string_key_used", switchKey, "available_cases", fmt.Sprintf("%v", spec.cases))
+		return "", fmt.Errorf("no case matching switch value '%v' (key: '%s') for expression '%s' and no default '_' case was found",
+			switchOnVal, switchKey, spec.switchOn)
+	}
 }
 
 // Type conversion helpers

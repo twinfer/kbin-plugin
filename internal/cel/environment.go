@@ -30,7 +30,7 @@ func NewEnvironment() (*cel.Env, error) {
 		bitwiseFunctions(),
 		mathFunctions(),
 		kaitaiApiFunctions(), // New function category using direct Kaitai API calls
-		processFunctions(),
+		//processFunctions(),
 		errorHandlingFunctions(),
 		safeArithmeticFunctions(),
 		streamOperations(),  // New function category for stream operations

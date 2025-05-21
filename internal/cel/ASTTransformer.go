@@ -229,7 +229,7 @@ func (t *ASTTransformer) VisitAttr(node *expr.Attr) error {
 			celFuncName = "pos" // Maps to pos(_io)
 			isIoAttrFunc = true
 		case "size":
-			celFuncName = "size" // Maps to size(_io)
+			celFuncName = "stream_size" // Maps to stream_size(_io)
 			isIoAttrFunc = true
 		case "eof", "is_eof":
 			celFuncName = "isEOF" // Maps to isEOF(_io)

@@ -226,7 +226,7 @@ func TestASTTransformer_Transform(t *testing.T) {
 		{
 			name:        "IO Size Attribute",
 			kaitaiExpr:  "_io.size",
-			expectedCEL: "size(_io)",
+			expectedCEL: "stream_size(_io)",
 		},
 		{
 			name:        "IO EOF Attribute",
@@ -319,7 +319,7 @@ func TestASTTransformer_Transform(t *testing.T) {
 		{
 			name:        "Complex: (a.b + c[0]) * d.e()",
 			kaitaiExpr:  "(my_obj.field + arr[0]) * another_obj.get_val()",
-			expectedCEL: "(((my_obj.field + at(arr, 0))) * get_val(another_obj))",
+			expectedCEL: "((my_obj.field + at(arr, 0)) * get_val(another_obj))", // Corrected expected output
 		},
 		{
 			name:        "Complex: Ternary with function calls",

@@ -180,7 +180,7 @@ func extractVariables(expr string) []string {
 	// Skip known function names and keywords
 	keywords := map[string]bool{
 		"true": true, "false": true, "null": true,
-		"size": true, "length": true, "count": true,
+		// Removed "size", "length", "count" as they can be field/instance names
 		"to_s": true, "to_i": true, "to_f": true,
 		"bitAnd": true, "bitOr": true, "bitXor": true, "bitNot": true,
 		"bitShiftLeft": true, "bitShiftRight": true,

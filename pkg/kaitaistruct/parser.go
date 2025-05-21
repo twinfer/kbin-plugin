@@ -9,9 +9,6 @@ import (
 	"log/slog"
 	"strings"
 
-	"golang.org/x/text/encoding/unicode"
-	"golang.org/x/text/transform"
-
 	"maps"
 	"slices"
 
@@ -132,7 +129,7 @@ func (k *KaitaiInterpreter) Parse(ctx context.Context, stream *kaitai.Stream) (*
 	// This is because instances can reference fields that are only available after parsing the root type
 	if k.schema.Instances != nil {
 		for name, inst := range k.schema.Instances { // TODO: Pass ctx to evaluateInstance
-			val, err := k.evaluateInstance(inst, rootCtx)
+			val, err := k.evaluateInstance(ctx, inst, rootCtx) // Pass ctx
 			if err != nil {
 				return nil, fmt.Errorf("failed evaluating instance '%s': %w", name, err)
 			}
@@ -182,38 +179,42 @@ func (k *KaitaiInterpreter) parseType(ctx context.Context, typeName string, stre
 
 	// Check if it's a switch type
 	if strings.Contains(typeName, "switch-on:") {
-		// Parse switch type format: switch-on:expression:default_type
-		parts := strings.Split(typeName, ":")
-		if len(parts) < 2 {
+		// Extract the expression part after "switch-on:"
+		expressionPart := strings.TrimPrefix(typeName, "switch-on:")
+		if expressionPart == typeName || expressionPart == "" { // Check if TrimPrefix did anything or if expr is empty
 			return nil, fmt.Errorf("invalid switch type format: %s", typeName)
 		}
+		switchExpr := strings.TrimSpace(expressionPart)
 
-		// Create context for evaluating switch expression
-		evalCtx := &ParseContext{ // Renamed from ctx to evalCtx to avoid shadowing the Go context
-			Children: make(map[string]any),
-			IO:       stream,
-			Parent:   k.valueStack[len(k.valueStack)-1],
-			Root:     k.valueStack[0].Root,
+		// The ad-hoc switch expression should be evaluated in the context of the
+		// type that *contains* this ad-hoc switch field. This context is the one
+		// at the top of the valueStack, which represents the type currently being parsed.
+		if len(k.valueStack) == 0 {
+			return nil, fmt.Errorf("internal error: valueStack is empty when evaluating ad-hoc switch for type '%s'", typeName)
+		}
+		currentTypeEvalCtx := k.valueStack[len(k.valueStack)-1]
+		k.logger.DebugContext(ctx, "Context for ad-hoc switch evaluation",
+			"type_name", typeName,
+			"switch_expr", switchExpr,
+			"currentTypeEvalCtx_children", fmt.Sprintf("%#v", currentTypeEvalCtx.Children))
+		if currentTypeEvalCtx == nil {
+			return nil, fmt.Errorf("internal error: valueStack is empty or has nil context for ad-hoc switch in type '%s'", typeName)
 		}
 
 		// Evaluate switch expression using CEL, passing the Go context `ctx`
-		switchExpr := parts[1]
-		switchValue, err := k.evaluateExpression(context.Background(), switchExpr, evalCtx)
+		switchValue, err := k.evaluateExpression(ctx, switchExpr, currentTypeEvalCtx)
 		if err != nil {
 			return nil, fmt.Errorf("failed to evaluate switch expression '%s' for type '%s': %w", switchExpr, typeName, err)
 		}
 
 		// Determine actual type based on switch value
-		var actualType string
-		// TODO: Implement switch cases mapping
-		// For now, use default type if specified
-		if len(parts) > 2 {
-			actualType = parts[2]
-		} else {
-			k.logger.ErrorContext(ctx, "No matching case for switch value", "type_name", typeName, "switch_on_expr", switchExpr, "switch_value", switchValue)
-			return nil, fmt.Errorf("no matching case for switch value: %v", switchValue)
+		actualType, ok := switchValue.(string)
+		if !ok {
+			k.logger.ErrorContext(ctx, "Ad-hoc switch expression did not evaluate to a string type name", "type_name", typeName, "switch_on_expr", switchExpr, "evaluated_value_type", fmt.Sprintf("%T", switchValue))
+			return nil, fmt.Errorf("ad-hoc switch expression '%s' did not evaluate to a string type name, got %T", switchExpr, switchValue)
 		}
-		k.logger.DebugContext(ctx, "Switch resolved", "original_type", typeName, "switch_on_expr", switchExpr, "switch_value", switchValue, "resolved_type", actualType)
+
+		k.logger.DebugContext(ctx, "Ad-hoc switch resolved", "original_type", typeName, "switch_on_expr", switchExpr, "switch_value", switchValue, "resolved_type", actualType)
 		// Parse using actual type, passing the Go context `ctx`
 		return k.parseType(ctx, actualType, stream)
 	}
@@ -262,51 +263,26 @@ func (k *KaitaiInterpreter) parseType(ctx context.Context, typeName string, stre
 
 		// Parse sequence fields
 		for _, seq := range typeObj.Seq {
-			// Check if this is a switch type
-			if seq.Type == "switch" {
-				// Handle switch case
-				switchSelector, err := NewSwitchTypeSelector(seq.Switch, k.schema)
-				if err != nil {
-					return nil, fmt.Errorf("creating switch selector for field '%s' in type '%s': %w", seq.ID, typeName, err)
-				}
+			var parsedFieldData *ParsedData // Renamed to avoid conflict
+			var parseErr error
+			k.logger.DebugContext(ctx, "Processing seq item in type", "type_name", typeName, "seq_id", seq.ID, "seq_type_literal", seq.Type, "is_switch", seq.Type == "switch")
 
-				// Resolve actual type using CEL for switch expressions
-				actualType, err := switchSelector.ResolveType(typeEvalCtx, k) // Pass the Go context `ctx` from parseType signature
-				if err != nil {
-					return nil, fmt.Errorf("resolving switch type for field '%s' in type '%s': %w", seq.ID, typeName, err)
-				}
-
-				// Override type for this field
-				seqCopy := seq
-				seqCopy.Type = actualType
-
-				// Parse field with resolved type
-				field, err := k.parseField(ctx, seqCopy, typeEvalCtx) // Pass Go context `ctx`, and *ParseContext `typeEvalCtx`
-				if err != nil {
-					return nil, fmt.Errorf("parsing switch field '%s' (resolved as '%s') in type '%s': %w",
-						seq.ID, actualType, typeName, err)
-				}
-
-				result.Children[seq.ID] = field            // Store the ParsedData
-				typeEvalCtx.Children[seq.ID] = field.Value // Store the primitive for expressions in typeEvalCtx
-				continue
+			// parseField will handle all field types, including resolving "switch" and "switch-on:"
+			parsedFieldData, parseErr = k.parseField(ctx, seq, typeEvalCtx)
+			if parseErr != nil {
+				return nil, fmt.Errorf("parsing field '%s' in type '%s': %w", seq.ID, typeName, parseErr)
 			}
 
-			// Parse regular field
-			field, err := k.parseField(ctx, seq, typeEvalCtx) // Pass Go context `ctx`, and *ParseContext `typeEvalCtx`
-			if err != nil {
-				return nil, fmt.Errorf("parsing field '%s' in type '%s': %w", seq.ID, typeName, err)
-			}
-			if field != nil { // Only add if not nil
-				result.Children[seq.ID] = field            // Store the ParsedData
-				typeEvalCtx.Children[seq.ID] = field.Value // Store the primitive for expressions in typeEvalCtx
+			if parsedFieldData != nil { // Only add if not nil (e.g., conditional field was skipped)
+				result.Children[seq.ID] = parsedFieldData            // Store the ParsedData
+				typeEvalCtx.Children[seq.ID] = parsedFieldData.Value // Store the primitive for expressions in typeEvalCtx
 			}
 		}
 
 		// Process instances if any
 		if typeObj.Instances != nil {
 			for name, inst := range typeObj.Instances { // TODO: Pass ctx to evaluateInstance
-				val, err := k.evaluateInstance(inst, typeEvalCtx)
+				val, err := k.evaluateInstance(ctx, inst, typeEvalCtx) // Pass ctx
 				if err != nil {
 					return nil, fmt.Errorf("evaluating instance '%s' in type '%s': %w",
 						name, typeName, err)
@@ -615,13 +591,55 @@ func (k *KaitaiInterpreter) parseField(ctx context.Context, field SequenceItem, 
 		if err != nil {
 			return nil, fmt.Errorf("processing field '%s' data with spec '%s': %w", field.ID, field.Process, err)
 		}
-
 		// Create new substream with processed data
 		subStream = kaitai.NewStream(bytes.NewReader(processedData))
 	}
-	k.logger.DebugContext(ctx, "Recursively parsing field type", "field_id", field.ID, "field_type_to_parse", field.Type)
+
+	// If the field's type is an ad-hoc switch string (e.g., "switch-on:expr"),
+	// resolve the actual type here using pCtx for expression evaluation.
+	actualFieldType := field.Type
+
+	if strings.HasPrefix(field.Type, "switch-on:") {
+		expressionPart := strings.TrimPrefix(field.Type, "switch-on:")
+		if expressionPart == field.Type || expressionPart == "" {
+			return nil, fmt.Errorf("invalid ad-hoc switch type format for field '%s': %s", field.ID, field.Type)
+		}
+		switchExpr := strings.TrimSpace(expressionPart)
+		k.logger.DebugContext(ctx, "Field has ad-hoc switch type, evaluating expression", "field_id", field.ID, "switch_expr", switchExpr, "pCtx_children", fmt.Sprintf("%#v", pCtx.Children))
+
+		switchValue, err := k.evaluateExpression(ctx, switchExpr, pCtx) // Use pCtx here
+		if err != nil {
+			return nil, fmt.Errorf("evaluating ad-hoc switch expression '%s' for field '%s': %w", switchExpr, field.ID, err)
+		}
+
+		resolvedTypeName, ok := switchValue.(string)
+		if !ok {
+			return nil, fmt.Errorf("ad-hoc switch expression '%s' for field '%s' did not evaluate to a string type name, got %T", switchExpr, field.ID, switchValue)
+		}
+		actualFieldType = resolvedTypeName
+		k.logger.DebugContext(ctx, "Ad-hoc switch field type resolved", "field_id", field.ID, "original_type", field.Type, "resolved_type", actualFieldType)
+	} else if field.Type == "switch" {
+		// Handle fields explicitly defined with type: switch
+		k.logger.DebugContext(ctx, "Field is an explicit switch type, resolving actual type", "field_id", field.ID)
+		if field.Switch == nil {
+			return nil, fmt.Errorf("field '%s' is of type 'switch' but has no 'switch-on' definition", field.ID)
+		}
+		switchSelector, err := NewSwitchTypeSelector(field.Switch, k.schema)
+		if err != nil {
+			return nil, fmt.Errorf("creating switch selector for field '%s': %w", field.ID, err)
+		}
+		// pCtx is the context of the parent type containing this switch field
+		resolvedType, err := switchSelector.ResolveType(ctx, pCtx, k)
+		if err != nil {
+			return nil, fmt.Errorf("resolving switch type for field '%s': %w", field.ID, err)
+		}
+		actualFieldType = resolvedType
+		k.logger.DebugContext(ctx, "Explicit switch field type resolved", "field_id", field.ID, "original_type", field.Type, "resolved_type", actualFieldType)
+	}
+
+	k.logger.DebugContext(ctx, "Recursively parsing field type", "field_id", field.ID, "field_type_to_parse", actualFieldType)
 	// Parse using the appropriate stream
-	return k.parseType(ctx, field.Type, subStream)
+	return k.parseType(ctx, actualFieldType, subStream)
 }
 
 // processDataWithCEL processes data using CEL expressions
@@ -941,7 +959,7 @@ func (k *KaitaiInterpreter) parseStringField(ctx context.Context, field Sequence
 	}
 
 	// Process encoding - use CEL's bytesToStr function
-	program, err := k.expressionPool.GetExpression("bytesToStr(input)")
+	program, err := k.expressionPool.GetExpression(fmt.Sprintf("bytesToStr(input, %q)", encoding)) // Pass encoding to CEL
 	if err != nil {
 		return nil, fmt.Errorf("failed to compile bytesToStr expression: %w", err)
 	}
@@ -949,40 +967,9 @@ func (k *KaitaiInterpreter) parseStringField(ctx context.Context, field Sequence
 	val, err := k.expressionPool.EvaluateExpression(program, map[string]any{
 		"input": strBytes,
 	})
+	// If CEL evaluation fails, it returns an error. We no longer have a manual fallback here.
 	if err != nil {
-		// If CEL processing fails, fall back to manual decoding
-		var str string
-
-		k.logger.WarnContext(ctx, "CEL bytesToStr failed, falling back to manual decoding", "field_id", field.ID, "cel_error", err)
-		// Use Kaitai's BytesToStr where possible
-		if strings.ToUpper(encoding) == "ASCII" || strings.ToUpper(encoding) == "UTF-8" || strings.ToUpper(encoding) == "UTF8" {
-			str, err = kaitai.BytesToStr(strBytes, nil)
-			if err != nil {
-				return nil, fmt.Errorf("decoding string for field '%s' with encoding '%s': %w", field.ID, encoding, err)
-			}
-
-		} else {
-			//  proper transcoding for other encodings
-			switch strings.ToUpper(encoding) {
-			case "UTF-16LE", "UTF16LE":
-				decoder := unicode.UTF16(unicode.LittleEndian, unicode.IgnoreBOM).NewDecoder()
-				utf8Str, _, err := transform.String(decoder, string(strBytes))
-				if err != nil {
-					return nil, fmt.Errorf("decoding UTF-16LE for field '%s': %w", field.ID, err)
-				}
-				str = utf8Str
-			case "UTF-16BE", "UTF16BE":
-				decoder := unicode.UTF16(unicode.BigEndian, unicode.IgnoreBOM).NewDecoder()
-				utf8Str, _, err := transform.String(decoder, string(strBytes))
-				if err != nil {
-					return nil, fmt.Errorf("decoding UTF-16BE for field '%s': %w", field.ID, err)
-				}
-				str = utf8Str
-			default:
-				return nil, fmt.Errorf("unsupported encoding '%s' for field '%s'", encoding, field.ID)
-			}
-		}
-		result.Value = str
+		return nil, fmt.Errorf("decoding string for field '%s' with encoding '%s' via CEL: %w", field.ID, encoding, err)
 	} else {
 		result.Value = val
 	}
@@ -1027,10 +1014,8 @@ func (k *KaitaiInterpreter) parseBytesField(ctx context.Context, field SequenceI
 }
 
 // evaluateInstance calculates an instance field
-func (k *KaitaiInterpreter) evaluateInstance(inst InstanceDef, pCtx *ParseContext) (*ParsedData, error) {
-	// TODO: This method should also accept context.Context
-	// k.logger.DebugContext(goCtx, "Evaluating instance", "instance_name", "TODO_get_name", "instance_value_expr", inst.Value)
-	goCtx := context.Background() // Placeholder, should ideally be passed in
+func (k *KaitaiInterpreter) evaluateInstance(goCtx context.Context, inst InstanceDef, pCtx *ParseContext) (*ParsedData, error) {
+	k.logger.DebugContext(goCtx, "Evaluating instance", "instance_value_expr", inst.Value) // TODO: Add instance name to log if available
 	// Evaluate the instance expression using CEL
 	value, err := k.evaluateExpression(goCtx, inst.Value, pCtx)
 	if err != nil {
