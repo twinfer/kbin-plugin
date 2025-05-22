@@ -23,7 +23,8 @@ vendor/
 .vscode/
 *.swp
 *.swo
-
+test/
+testdata/
 # OS specific files
 .DS_Store
 Thumbs.db

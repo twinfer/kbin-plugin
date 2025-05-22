@@ -15,6 +15,7 @@ import (
 	"github.com/google/cel-go/cel"
 	"github.com/kaitai-io/kaitai_struct_go_runtime/kaitai"
 	internalCel "github.com/twinfer/kbin-plugin/internal/cel"
+	"github.com/twinfer/kbin-plugin/testutil"
 )
 
 // KaitaiInterpreter provides dynamic parsing of binary data using a Kaitai schema
@@ -1075,6 +1076,7 @@ func (k *KaitaiInterpreter) evaluateInstance(goCtx context.Context, inst Instanc
 		Type:  inst.Type,
 		Value: value,
 	}
+	k.logger.DebugContext(goCtx, "Instance value from CEL", "instance_name", inst.DocRef, "value", value, "value_type", fmt.Sprintf("%T", value))
 
 	// Handle type conversion if needed
 	if inst.Type != "" {
@@ -1152,7 +1154,8 @@ func ParsedDataToMap(data *ParsedData) any {
 
 	// Add all children
 	for name, child := range data.Children {
-		result[name] = ParsedDataToMap(child)
+		result[testutil.ToPascalCase(name)] = ParsedDataToMap(child) // Convert key to PascalCase
+
 	}
 
 	return result

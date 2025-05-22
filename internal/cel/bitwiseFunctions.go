@@ -38,11 +38,14 @@ func performBitwiseOp(lhs, rhs ref.Val, op func(uint64, uint64) uint64) ref.Val 
 		return types.NewErr("bitwise arguments must be integers or unsigned integers, got %T and %T", lhs.Value(), rhs.Value())
 	}
 
-	// If both original inputs were Int, and the operation is one that typically preserves "int-ness"
-	// (like AND, OR, XOR if not resulting in a value > max int64), one might consider returning Int.
-	// However, for general bitwise ops, returning Uint is often safer to avoid overflow/sign issues.
-	// For simplicity and consistency with Kaitai's typical unsigned view of bit patterns, we'll return Uint.
-	return types.Uint(op(l, r))
+	result := op(l, r)
+	// If the result can fit into an int64, prefer returning Int for better compatibility
+	// with standard arithmetic operators that might expect Int.
+	// This is a heuristic; for true bit patterns, Uint might be more "correct".
+	if result <= uint64(^uint64(0)>>1) { // MaxInt is int64 max
+		return types.Int(result)
+	}
+	return types.Uint(result)
 }
 
 type bitwiseLib struct{}
