@@ -52,6 +52,7 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"log/slog"
 	"path/filepath"
 	"fmt"
 	"reflect"
@@ -76,8 +77,8 @@ func TestParse_{{.StructName}}(t *testing.T) {
 	
 	schema, err := kaitaistruct.NewKaitaiSchemaFromYAML(yamlData)
 	require.NoError(t, err)
-	
-	interpreter, err := kaitaistruct.NewKaitaiInterpreter(schema, nil)
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	interpreter, err := kaitaistruct.NewKaitaiInterpreter(schema, logger)
 	require.NoError(t, err)
 
 	// Read binary file
