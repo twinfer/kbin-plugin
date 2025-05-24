@@ -21,6 +21,7 @@ vendor/
 # IDE files
 .idea/
 .vscode/
+.github/
 *.swp
 *.swo
 test/
@@ -29,3 +30,4 @@ testdata/
 .DS_Store
 Thumbs.db
 temp.go
+test/kaitaistruct

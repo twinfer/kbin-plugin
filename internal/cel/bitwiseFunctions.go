@@ -23,6 +23,9 @@ func performBitwiseOp(lhs, rhs ref.Val, op func(uint64, uint64) uint64) ref.Val 
 	case types.Uint:
 		l = uint64(lv)
 		lOk = true
+	case types.Double: // Handle double by converting to uint64
+		l = uint64(lv) // Note: This truncates the fractional part
+		lOk = true
 	}
 
 	switch rv := rhs.(type) {
@@ -32,10 +35,13 @@ func performBitwiseOp(lhs, rhs ref.Val, op func(uint64, uint64) uint64) ref.Val 
 	case types.Uint:
 		r = uint64(rv)
 		rOk = true
+	case types.Double: // Handle double by converting to uint64
+		r = uint64(rv) // Note: This truncates the fractional part
+		rOk = true
 	}
 
 	if !lOk || !rOk {
-		return types.NewErr("bitwise arguments must be integers or unsigned integers, got %T and %T", lhs.Value(), rhs.Value())
+		return types.NewErr("bitwise arguments must be numeric (int, uint, double), got %T and %T", lhs.Value(), rhs.Value())
 	}
 
 	result := op(l, r)
@@ -53,28 +59,8 @@ type bitwiseLib struct{}
 func (*bitwiseLib) CompileOptions() []cel.EnvOption {
 	return []cel.EnvOption{
 		// bitAnd
-		cel.Function("bitAnd",
-			cel.Overload("bitand_int_int", []*cel.Type{cel.IntType, cel.IntType}, cel.IntType,
-				cel.BinaryBinding(func(lhs, rhs ref.Val) ref.Val {
-					left, ok1 := lhs.(types.Int)
-					right, ok2 := rhs.(types.Int)
-					if !ok1 || !ok2 {
-						return types.NewErr("arguments to bitAnd must be integers")
-					}
-					return types.Int(left & right)
-				}),
-			),
-			cel.Overload("bitand_uint_uint", []*cel.Type{cel.UintType, cel.UintType}, cel.UintType,
-				cel.BinaryBinding(func(lhs, rhs ref.Val) ref.Val {
-					return performBitwiseOp(lhs, rhs, func(a, b uint64) uint64 { return a & b })
-				}),
-			),
-			cel.Overload("bitand_int_uint", []*cel.Type{cel.IntType, cel.UintType}, cel.UintType,
-				cel.BinaryBinding(func(lhs, rhs ref.Val) ref.Val {
-					return performBitwiseOp(lhs, rhs, func(a, b uint64) uint64 { return a & b })
-				}),
-			),
-			cel.Overload("bitand_uint_int", []*cel.Type{cel.UintType, cel.IntType}, cel.UintType,
+		cel.Function("bitAnd", // Renamed from bitAnd for clarity if old ones are kept temporarily
+			cel.Overload("bitand_numeric", []*cel.Type{cel.DynType, cel.DynType}, cel.DynType, // Result type could be IntType or UintType based on performBitwiseOp
 				cel.BinaryBinding(func(lhs, rhs ref.Val) ref.Val {
 					return performBitwiseOp(lhs, rhs, func(a, b uint64) uint64 { return a & b })
 				}),
@@ -82,28 +68,8 @@ func (*bitwiseLib) CompileOptions() []cel.EnvOption {
 		),
 
 		// bitOr
-		cel.Function("bitOr",
-			cel.Overload("bitor_int_int", []*cel.Type{cel.IntType, cel.IntType}, cel.IntType,
-				cel.BinaryBinding(func(lhs, rhs ref.Val) ref.Val {
-					left, ok1 := lhs.(types.Int)
-					right, ok2 := rhs.(types.Int)
-					if !ok1 || !ok2 {
-						return types.NewErr("arguments to bitOr must be integers")
-					}
-					return types.Int(left | right)
-				}),
-			),
-			cel.Overload("bitor_uint_uint", []*cel.Type{cel.UintType, cel.UintType}, cel.UintType,
-				cel.BinaryBinding(func(lhs, rhs ref.Val) ref.Val {
-					return performBitwiseOp(lhs, rhs, func(a, b uint64) uint64 { return a | b })
-				}),
-			),
-			cel.Overload("bitor_int_uint", []*cel.Type{cel.IntType, cel.UintType}, cel.UintType,
-				cel.BinaryBinding(func(lhs, rhs ref.Val) ref.Val {
-					return performBitwiseOp(lhs, rhs, func(a, b uint64) uint64 { return a | b })
-				}),
-			),
-			cel.Overload("bitor_uint_int", []*cel.Type{cel.UintType, cel.IntType}, cel.UintType,
+		cel.Function("bitOr", // Renamed
+			cel.Overload("bitor_numeric", []*cel.Type{cel.DynType, cel.DynType}, cel.DynType,
 				cel.BinaryBinding(func(lhs, rhs ref.Val) ref.Val {
 					return performBitwiseOp(lhs, rhs, func(a, b uint64) uint64 { return a | b })
 				}),
@@ -111,28 +77,8 @@ func (*bitwiseLib) CompileOptions() []cel.EnvOption {
 		),
 
 		// bitXor
-		cel.Function("bitXor",
-			cel.Overload("bitxor_int_int", []*cel.Type{cel.IntType, cel.IntType}, cel.IntType,
-				cel.BinaryBinding(func(lhs, rhs ref.Val) ref.Val {
-					left, ok1 := lhs.(types.Int)
-					right, ok2 := rhs.(types.Int)
-					if !ok1 || !ok2 {
-						return types.NewErr("arguments to bitXor must be integers")
-					}
-					return types.Int(left ^ right)
-				}),
-			),
-			cel.Overload("bitxor_uint_uint", []*cel.Type{cel.UintType, cel.UintType}, cel.UintType,
-				cel.BinaryBinding(func(lhs, rhs ref.Val) ref.Val {
-					return performBitwiseOp(lhs, rhs, func(a, b uint64) uint64 { return a ^ b })
-				}),
-			),
-			cel.Overload("bitxor_int_uint", []*cel.Type{cel.IntType, cel.UintType}, cel.UintType,
-				cel.BinaryBinding(func(lhs, rhs ref.Val) ref.Val {
-					return performBitwiseOp(lhs, rhs, func(a, b uint64) uint64 { return a ^ b })
-				}),
-			),
-			cel.Overload("bitxor_uint_int", []*cel.Type{cel.UintType, cel.IntType}, cel.UintType,
+		cel.Function("bitXor", // Renamed
+			cel.Overload("bitxor_numeric", []*cel.Type{cel.DynType, cel.DynType}, cel.DynType,
 				cel.BinaryBinding(func(lhs, rhs ref.Val) ref.Val {
 					return performBitwiseOp(lhs, rhs, func(a, b uint64) uint64 { return a ^ b })
 				}),

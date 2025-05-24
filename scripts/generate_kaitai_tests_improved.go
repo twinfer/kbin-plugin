@@ -13,6 +13,7 @@ package main
 // 	"os/exec"
 // 	"path/filepath"
 // 	"runtime"
+// 	"strconv"
 // 	"strings"
 // 	"text/template"
 // 	"unicode"
@@ -25,29 +26,30 @@ package main
 // 	kscGoTestDir     = flag.String("ksc_go_test_dir", "test/go", "KSC Go test files directory (relative to project root)")
 // 	kscGenDir        = flag.String("ksc_gen_dir", "testdata/formats_kaitai_go_gen", "KSC generated Go files directory (relative to project root)")
 // 	testOutputDir    = flag.String("test_output_dir", "testdata/kaitaistruct/formats_test", "Test output directory (relative to project root)")
-// 	testTemplateFile = flag.String("test_template_file", "scripts/test_template.tmpl", "Template file path (relative to project root)")
+// 	testTemplateFile = flag.String("test_template_file", "scripts/test_template_improved.tmpl", "Template file path (relative to project root)")
 // )
 
 // type TemplateData struct {
-// 	FormatName         string          // e.g., "png", "bits_simple"
-// 	StructName         string          // e.g., "Png", "BitsSimple" (PascalCase)
-// 	KsyFileName        string          // e.g., "png.ksy"
-// 	FormatPackageAlias string          // e.g., "png_kaitai"
-// 	TestCases          []TestCaseData  // For .bin file based tests
-// 	Assertions         []AssertionData // For assertions from KSC tests
+// 	FormatName         string
+// 	StructName         string
+// 	KsyFileName        string
+// 	FormatPackageAlias string
+// 	TestCases          []TestCaseData
+// 	Assertions         []AssertionData
 // }
 
 // type TestCaseData struct {
-// 	Name           string // e.g., "sample1" (from sample1.bin)
-// 	BinFileRelPath string // Relative path of .bin file
+// 	Name           string
+// 	BinFileRelPath string
 // }
 
 // type AssertionData struct {
-// 	ExpectedValueRaw  string   // Raw string of the expected value, e.g., "uint32(123)", "[]uint8{1,2}", "3"
-// 	BaseObjectPath    []string // Path to the base object in customMap, e.g., for r.Ltr.AsInt -> ["Ltr", "AsInt"]; for r.ArrayOfInts[0] -> ["ArrayOfInts"]
-// 	Operation         string   // Type of operation on BaseObjectPath: "" (direct), "INDEX", "LEN", "GETTER"
-// 	OperationArg      string   // Argument for the operation, e.g., "0" for INDEX
-// 	OriginalKscGoExpr string   // The original KSC Go expression for the actual value, for reference
+// 	ExpectedValueRaw  string
+// 	BaseObjectPath    []string
+// 	Operation         string // "", "INDEX", "LEN", "METHOD"
+// 	OperationArg      string
+// 	MethodName        string // For METHOD operations (e.g., "AsInt", "AsStr")
+// 	OriginalKscGoExpr string
 // }
 
 // func getProjectRoot() string {
@@ -62,7 +64,6 @@ package main
 // func main() {
 // 	flag.Parse()
 
-// 	// Auto-detect project root if not provided
 // 	var rootDir string
 // 	if *projectRoot != "" {
 // 		rootDir = *projectRoot
@@ -70,7 +71,6 @@ package main
 // 		rootDir = getProjectRoot()
 // 	}
 
-// 	// Convert relative paths to absolute
 // 	absKsyDir := filepath.Join(rootDir, *ksyDir)
 // 	absBinDir := filepath.Join(rootDir, *binDir)
 // 	absKscGoTestDir := filepath.Join(rootDir, *kscGoTestDir)
@@ -82,37 +82,25 @@ package main
 // 	log.Printf("Project Root: %s", rootDir)
 // 	log.Printf("KSY Source Directory: %s", absKsyDir)
 // 	log.Printf("BIN Source Directory: %s", absBinDir)
-// 	log.Printf("KSC Go Test Directory: %s", absKscGoTestDir)
-// 	log.Printf("KSC Gen Directory: %s", absKscGenDir)
-// 	log.Printf("Test Output Directory: %s", absTestOutputDir)
-// 	log.Printf("Test Template: %s", absTestTemplateFile)
 // 	log.Printf("==========================================")
 
-// 	// Verify template exists
 // 	if _, err := os.Stat(absTestTemplateFile); err != nil {
 // 		log.Fatalf("Template file not found: %s", absTestTemplateFile)
 // 	}
 
-// 	// Ensure directories exist
 // 	for _, dir := range []string{absKscGenDir, absTestOutputDir} {
 // 		if err := os.MkdirAll(dir, 0755); err != nil {
 // 			log.Fatalf("Failed to create directory '%s': %v", dir, err)
 // 		}
 // 	}
 
-// 	// Parse template with helpful functions
 // 	tmpl, err := template.New(filepath.Base(absTestTemplateFile)).
 // 		Funcs(template.FuncMap{
-// 			"getMapKeys": func(m map[string]any) []string {
-// 				keys := make([]string, 0, len(m))
-// 				for k := range m {
-// 					keys = append(keys, k)
-// 				}
-// 				return keys
-// 			},
+// 			"toLower": strings.ToLower,
 // 			"len": func(slice []AssertionData) int {
 // 				return len(slice)
 // 			},
+// 			"base": filepath.Base,
 // 		}).
 // 		ParseFiles(absTestTemplateFile)
 // 	if err != nil {
@@ -139,46 +127,34 @@ package main
 // 		formatName := strings.TrimSuffix(ksyFileName, ".ksy")
 // 		goPackageName := strings.ReplaceAll(strings.ReplaceAll(formatName, "-", "_"), ".", "_")
 
-// 		log.Printf("[%d/%d] Processing format: %s (KSY: %s)", i+1, len(ksyFiles), formatName, ksyFileName)
+// 		log.Printf("[%d/%d] Processing format: %s", i+1, len(ksyFiles), formatName)
 
-// 		// Generate KSC Go code
 // 		cmd := exec.Command("ksc", "-t", "go", "--outdir", absKscGenDir, "--go-package", goPackageName, "--import-path", absKsyDir, ksyFilePath)
 // 		var kscErr bytes.Buffer
 // 		cmd.Stderr = &kscErr
 // 		if err := cmd.Run(); err != nil {
-// 			log.Printf("  ❌ KSC failed for %s: %v. Stderr: %s. Skipping.", formatName, err, kscErr.String())
+// 			log.Printf("  ❌ KSC failed for %s: %v", formatName, err)
 // 			skipCount++
 // 			continue
 // 		}
-// 		log.Printf("  ✅ KSC generation successful")
 
-// 		// Look for .bin test files
-// 		var testCases []TestCaseData
-// 		binFilePath := filepath.Join(absBinDir, formatName+".bin")
-// 		if _, err := os.Stat(binFilePath); err == nil {
-// 			testCases = append(testCases, TestCaseData{
-// 				Name:           formatName,
-// 				BinFileRelPath: formatName + ".bin",
-// 			})
-// 			log.Printf("  📁 Found binary test file: %s", formatName+".bin")
-// 		} else {
-// 			log.Printf("  📁 No binary test file found for %s", formatName)
-// 		}
+// 		// Enhanced binary file discovery
+// 		testCases := findBinaryTestFiles(absBinDir, formatName)
 
-// 		// Extract assertions from KSC test file
 // 		kscGoTestFilePath := filepath.Join(absKscGoTestDir, goPackageName+"_test.go")
 // 		assertions := extractAssertionsFromKscTest(kscGoTestFilePath)
 
-// 		// Generate test if we have test cases OR assertions
 // 		if len(testCases) == 0 && len(assertions) == 0 {
-// 			log.Printf("  ⚠️  No .bin samples and no assertions found for %s. Skipping test file generation.", formatName)
+// 			log.Printf("  ⚠️  No test data found for %s", formatName)
 // 			skipCount++
 // 			continue
 // 		}
 
-// 		log.Printf("  📊 Generating test for %s: %d test cases, %d assertions", formatName, len(testCases), len(assertions))
+// 		// Augment test cases with those found by analyzing KSC Go test files
+// 		testCases = augmentTestCasesFromKscGoTest(testCases, absBinDir, kscGoTestFilePath)
 
-// 		// Prepare template data
+// 		log.Printf("  📊 Generating test: %d binary files, %d assertions", len(testCases), len(assertions))
+
 // 		data := TemplateData{
 // 			FormatName:         formatName,
 // 			StructName:         toPascalCase(goPackageName),
@@ -188,27 +164,153 @@ package main
 // 			Assertions:         assertions,
 // 		}
 
-// 		// Generate test file
 // 		outputTestFilePath := filepath.Join(absTestOutputDir, goPackageName+"_gen_test.go")
 // 		if err := generateTestFile(tmpl, data, outputTestFilePath); err != nil {
-// 			log.Printf("  ❌ Failed to generate test file for %s: %v", formatName, err)
-// 			log.Printf("     * Check KSY file: %s", ksyFilePath)
-// 			log.Printf("     * Verify template syntax and data structures")
+// 			log.Printf("  ❌ Failed to generate test file: %v", err)
 // 			skipCount++
 // 			continue
 // 		}
 
-// 		log.Printf("  ✅ Generated test file: %s", filepath.Base(outputTestFilePath))
+// 		log.Printf("  ✅ Generated test file")
 // 		successCount++
 // 	}
 
-// 	log.Printf("\n=== Generation Summary ===")
+// 	log.Printf("\n=== Summary ===")
 // 	log.Printf("Success: %d", successCount)
 // 	log.Printf("Skipped: %d", skipCount)
-// 	log.Printf("Total:   %d", len(ksyFiles))
-// 	if skipCount > 0 {
-// 		log.Printf("⚠️  %d files were skipped - check logs above for details", skipCount)
+// }
+
+// // findBinaryTestFiles discovers binary test files based on common naming patterns.
+// func findBinaryTestFiles(binDir, formatName string) []TestCaseData {
+// 	var testCases []TestCaseData
+// 	seen := make(map[string]bool)
+
+// 	// Patterns to check
+// 	patterns := []string{
+// 		formatName + ".bin",
+// 		formatName + "_*.bin",
+// 		strings.ReplaceAll(formatName, "_", "-") + ".bin",
+// 		strings.ReplaceAll(formatName, "-", "_") + ".bin",
+// 		// Case-insensitive match for the format name itself
+// 		strings.ToLower(formatName) + ".bin",
+// 		strings.ToUpper(formatName) + ".bin",
 // 	}
+
+// 	for _, pattern := range patterns {
+// 		matches, _ := filepath.Glob(filepath.Join(binDir, pattern))
+// 		for _, match := range matches {
+// 			baseName := filepath.Base(match)
+// 			if !seen[baseName] {
+// 				testName := strings.TrimSuffix(baseName, ".bin")
+// 				testCases = append(testCases, TestCaseData{
+// 					Name:           testName,
+// 					BinFileRelPath: baseName,
+// 				})
+// 				seen[baseName] = true
+// 			}
+// 		}
+// 	}
+// 	if len(testCases) > 0 {
+// 		log.Printf("  Found %d binary test files using glob patterns", len(testCases))
+// 	}
+// 	return testCases
+// }
+
+// // augmentTestCasesFromKscGoTest adds test cases found by parsing os.Open calls in KSC's Go test file.
+// func augmentTestCasesFromKscGoTest(existingTestCases []TestCaseData, binDir, kscGoTestFilePath string) []TestCaseData {
+// 	seen := make(map[string]bool)
+// 	for _, tc := range existingTestCases {
+// 		seen[tc.BinFileRelPath] = true
+// 	}
+
+// 	extractedBinFiles := extractBinFilenamesFromGoTest(kscGoTestFilePath)
+// 	addedCount := 0
+// 	for _, binFile := range extractedBinFiles {
+// 		if !seen[binFile] {
+// 			// Check if this file actually exists in our binDir
+// 			if _, err := os.Stat(filepath.Join(binDir, binFile)); err == nil {
+// 				testName := strings.TrimSuffix(binFile, ".bin")
+// 				existingTestCases = append(existingTestCases, TestCaseData{
+// 					Name:           testName,
+// 					BinFileRelPath: binFile,
+// 				})
+// 				seen[binFile] = true
+// 				addedCount++
+// 			} else {
+// 				log.Printf("  🔍 Bin file '%s' mentioned in KSC test '%s' but not found in '%s'", binFile, filepath.Base(kscGoTestFilePath), binDir)
+// 			}
+// 		}
+// 	}
+// 	if addedCount > 0 {
+// 		log.Printf("  Added %d binary test files by analyzing KSC Go test: %s", addedCount, filepath.Base(kscGoTestFilePath))
+// 	}
+// 	return existingTestCases
+// }
+
+// // Helper struct for visiting AST nodes to find os.Open calls
+// type osOpenVisitor struct {
+// 	fset               *token.FileSet
+// 	discoveredBinFiles map[string]bool // Use a map for uniqueness
+// }
+
+// func (v *osOpenVisitor) Visit(node ast.Node) ast.Visitor {
+// 	if node == nil {
+// 		return nil
+// 	}
+
+// 	callExpr, ok := node.(*ast.CallExpr)
+// 	if !ok {
+// 		return v
+// 	}
+
+// 	// Check if it's os.Open
+// 	selExpr, ok := callExpr.Fun.(*ast.SelectorExpr)
+// 	if !ok {
+// 		return v
+// 	}
+
+// 	if pkgIdent, ok := selExpr.X.(*ast.Ident); ok && pkgIdent.Name == "os" && selExpr.Sel.Name == "Open" {
+// 		if len(callExpr.Args) > 0 {
+// 			if pathLit, ok := callExpr.Args[0].(*ast.BasicLit); ok && pathLit.Kind == token.STRING {
+// 				pathArg, err := strconv.Unquote(pathLit.Value)
+// 				if err == nil {
+// 					baseName := filepath.Base(pathArg)
+// 					if strings.HasSuffix(strings.ToLower(baseName), ".bin") { // Case-insensitive check for .bin
+// 						v.discoveredBinFiles[baseName] = true
+// 					}
+// 				}
+// 			}
+// 		}
+// 	}
+// 	return v
+// }
+
+// // extractBinFilenamesFromGoTest parses a Go test file and extracts .bin filenames
+// // from os.Open(".../filename.bin") calls.
+// func extractBinFilenamesFromGoTest(filePath string) []string {
+// 	if _, err := os.Stat(filePath); os.IsNotExist(err) {
+// 		// KSC Go test file might not exist for all formats, which is fine.
+// 		return nil
+// 	}
+
+// 	fset := token.NewFileSet()
+// 	node, err := parser.ParseFile(fset, filePath, nil, 0)
+// 	if err != nil {
+// 		log.Printf("Warning: Could not parse KSC Go test file %s for os.Open calls: %v", filePath, err)
+// 		return nil
+// 	}
+
+// 	visitor := &osOpenVisitor{
+// 		fset:               fset,
+// 		discoveredBinFiles: make(map[string]bool),
+// 	}
+// 	ast.Walk(visitor, node)
+
+// 	var filenames []string
+// 	for fname := range visitor.discoveredBinFiles {
+// 		filenames = append(filenames, fname)
+// 	}
+// 	return filenames
 // }
 
 // func generateTestFile(tmpl *template.Template, data TemplateData, outputPath string) error {
@@ -225,7 +327,7 @@ package main
 
 // 	formattedBytes, err := formatSource(outputPath, renderedTest.Bytes())
 // 	if err != nil {
-// 		log.Printf("Warning: goimports failed for %s: %v. Writing unformatted code.", outputPath, err)
+// 		log.Printf("Warning: goimports failed for %s: %v", outputPath, err)
 // 		formattedBytes = renderedTest.Bytes()
 // 	}
 
@@ -262,7 +364,7 @@ package main
 // 	var stderr bytes.Buffer
 // 	cmd.Stderr = &stderr
 // 	if err := cmd.Run(); err != nil {
-// 		return src, fmt.Errorf("goimports failed for %s: %w\nStderr: %s", filename, err, stderr.String())
+// 		return src, fmt.Errorf("goimports failed: %w\nStderr: %s", err, stderr.String())
 // 	}
 // 	return out.Bytes(), nil
 // }
@@ -270,7 +372,7 @@ package main
 // func nodeToString(fset *token.FileSet, node ast.Node) string {
 // 	var buf bytes.Buffer
 // 	if err := format.Node(&buf, fset, node); err != nil {
-// 		return fmt.Sprintf("<error_converting_node: %v>", err)
+// 		return fmt.Sprintf("<error: %v>", err)
 // 	}
 // 	return buf.String()
 // }
@@ -278,7 +380,7 @@ package main
 // type assertionVisitor struct {
 // 	fset           *token.FileSet
 // 	assertions     []AssertionData
-// 	varAssignments map[string]ast.Expr // Stores assignments like tmp1 := r.Ltr.AsInt()
+// 	varAssignments map[string]ast.Expr
 // }
 
 // func (v *assertionVisitor) Visit(node ast.Node) ast.Visitor {
@@ -286,21 +388,13 @@ package main
 // 		return nil
 // 	}
 
-// 	// Look for assignments like: tmpX, err := r.Some.Expression() or tmpX := len(r.Array)
 // 	if assignStmt, ok := node.(*ast.AssignStmt); ok {
 // 		if len(assignStmt.Lhs) > 0 && len(assignStmt.Rhs) > 0 {
-// 			// We are interested in simple assignments to an identifier,
-// 			// potentially ignoring 'err' if it's a multi-value assignment.
-// 			// Example: tmp1, err := r.Ltr.AsInt()  OR  tmp1 := r.Ltr.AsInt()
 // 			if ident, ok := assignStmt.Lhs[0].(*ast.Ident); ok {
-// 				// Store the RHS expression associated with this identifier
-// 				// If it's `tmp, err := ...`, assignStmt.Rhs[0] is the expression.
-// 				// If it's `tmp := ...`, assignStmt.Rhs[0] is also the expression.
 // 				v.varAssignments[ident.Name] = assignStmt.Rhs[0]
-// 				log.Printf("AST Visitor: Stored assignment for %s = %s", ident.Name, nodeToString(v.fset, assignStmt.Rhs[0]))
 // 			}
 // 		}
-// 		return v // Continue traversal
+// 		return v
 // 	}
 
 // 	callExpr, ok := node.(*ast.CallExpr)
@@ -316,16 +410,14 @@ package main
 // 			expectedStr := nodeToString(v.fset, callExpr.Args[1])
 // 			actualKscExprStr := nodeToString(v.fset, callExpr.Args[2])
 
-// 			// Resolve if actualArgNode is an identifier (tmp variable)
 // 			actualNodeToParse := callExpr.Args[2]
 // 			if ident, ok := actualNodeToParse.(*ast.Ident); ok {
 // 				if resolvedExpr, found := v.varAssignments[ident.Name]; found {
-// 					actualNodeToParse = resolvedExpr // Parse the expression assigned to the variable
-// 					log.Printf("AST Visitor: Resolved %s to %s for assertion", ident.Name, nodeToString(v.fset, resolvedExpr))
+// 					actualNodeToParse = resolvedExpr
 // 				}
 // 			}
 
-// 			basePath, operation, opArg := v.parseKscActualAstNode(actualNodeToParse)
+// 			basePath, operation, opArg, methodName := v.parseKscActualAstNode(actualNodeToParse)
 
 // 			if len(basePath) > 0 || operation != "" {
 // 				v.assertions = append(v.assertions, AssertionData{
@@ -333,19 +425,41 @@ package main
 // 					BaseObjectPath:    basePath,
 // 					Operation:         operation,
 // 					OperationArg:      opArg,
+// 					MethodName:        methodName,
 // 					OriginalKscGoExpr: actualKscExprStr,
 // 				})
-// 			} else {
-// 				log.Printf("Warning: Could not parse 'actual' expression AST for: %s in EqualValues", actualKscExprStr)
 // 			}
 // 		}
 // 	}
 // 	return v
 // }
 
-// func (v *assertionVisitor) parseKscActualAstNode(node ast.Node) (basePath []string, operation string, opArg string) {
+// func (v *assertionVisitor) parseKscActualAstNode(node ast.Node) (basePath []string, operation string, opArg string, methodName string) {
 // 	switch n := node.(type) {
-// 	case *ast.SelectorExpr: // r.Field, r.Struct.Field, r.Ltr.AsInt (if AsInt is a field/method)
+// 	case *ast.CallExpr:
+// 		// Handle len(r.Array)
+// 		if funIdent, ok := n.Fun.(*ast.Ident); ok && funIdent.Name == "len" && len(n.Args) == 1 {
+// 			basePath, _, _, _ = v.parseKscActualAstNode(n.Args[0])
+// 			return basePath, "LEN", "", ""
+// 		}
+
+// 		// Handle method calls like r.Ltr.AsInt() or r.Header.Flags.IsCompressed()
+// 		if selExpr, ok := n.Fun.(*ast.SelectorExpr); ok {
+// 			methodName = selExpr.Sel.Name
+// 			// Check if this is a known conversion method
+// 			if isConversionMethod(methodName) {
+// 				basePath, _, _, _ = v.parseKscActualAstNode(selExpr.X)
+// 				return basePath, "METHOD", "", methodName
+// 			}
+// 			// If not a special conversion method, it might be a boolean flag or similar.
+// 			// Treat it as part of the path for now.
+// 			// This might need refinement if it's a method that returns a complex type.
+// 			parentPath, _, _, _ := v.parseKscActualAstNode(selExpr.X)
+// 			basePath = append(parentPath, toPascalCase(methodName)) // Add method name to path
+// 			return basePath, "", "", ""                             // No specific operation, just path access
+// 		}
+
+// 	case *ast.SelectorExpr:
 // 		var parts []string
 // 		currExpr := ast.Expr(n)
 // 		for {
@@ -354,69 +468,46 @@ package main
 // 				if ident, okId := currExpr.(*ast.Ident); okId && ident.Name == "r" {
 // 					break
 // 				}
-// 				return nil, "", "" // Should end with 'r'
+// 				return nil, "", "", ""
 // 			}
-// 			// Clean method names and convert to PascalCase
-// 			methodName := strings.TrimSuffix(sel.Sel.Name, "()")
-// 			parts = append(parts, toPascalCase(methodName))
+// 			parts = append(parts, toPascalCase(sel.Sel.Name))
 // 			currExpr = sel.X
 // 		}
-// 		// Reverse parts to get correct order
 // 		for i, j := 0, len(parts)-1; i < j; i, j = i+1, j-1 {
 // 			parts[i], parts[j] = parts[j], parts[i]
 // 		}
-// 		return parts, "", ""
+// 		return parts, "", "", ""
 
-// 	case *ast.IndexExpr: // r.Array[index]
-// 		basePath, _, _ = v.parseKscActualAstNode(n.X)
+// 	case *ast.IndexExpr:
+// 		basePath, _, _, _ = v.parseKscActualAstNode(n.X)
 // 		opArg = nodeToString(v.fset, n.Index)
-// 		return basePath, "INDEX", opArg
+// 		return basePath, "INDEX", opArg, ""
 
-// 	case *ast.CallExpr: // len(r.Array), r.InstanceGetter()
-// 		if funIdent, ok := n.Fun.(*ast.Ident); ok && funIdent.Name == "len" && len(n.Args) == 1 {
-// 			basePath, _, _ = v.parseKscActualAstNode(n.Args[0])
-// 			return basePath, "LEN", ""
-// 		}
-// 		if selExpr, ok := n.Fun.(*ast.SelectorExpr); ok { // r.Ltr.AsInt()
-// 			// For method calls like r.Ltr.AsInt(), treat the entire path as the base path
-// 			// Parse the selector expression to get the full path including the method name
-// 			var parts []string
-// 			currExpr := ast.Expr(selExpr)
-// 			for {
-// 				sel, ok := currExpr.(*ast.SelectorExpr)
-// 				if !ok {
-// 					if ident, okId := currExpr.(*ast.Ident); okId && ident.Name == "r" {
-// 						break
-// 					}
-// 					return nil, "", "" // Should end with 'r'
-// 				}
-// 				// Include method name as part of the path (convert to PascalCase)
-// 				methodName := strings.TrimSuffix(sel.Sel.Name, "()")
-// 				parts = append(parts, toPascalCase(methodName))
-// 				currExpr = sel.X
-// 			}
-// 			// Reverse to get correct order
-// 			for i, j := 0, len(parts)-1; i < j; i, j = i+1, j-1 {
-// 				parts[i], parts[j] = parts[j], parts[i]
-// 			}
-// 			return parts, "GETTER", "" // Use GETTER to indicate this is a method call
-// 		}
-
-// 	case *ast.Ident: // Handle direct identifiers if they weren't resolved from varAssignments
+// 	case *ast.Ident:
 // 		if n.Name == "r" {
-// 			return []string{}, "", "" // Represents the root object itself
+// 			return []string{}, "", "", ""
 // 		}
 // 	}
 
-// 	log.Printf("Warning: Unhandled AST node type for KSC 'actual' expression: %T -> %s", node, nodeToString(v.fset, node))
-// 	return nil, "", ""
+// 	return nil, "", "", ""
+// }
+
+// // Known conversion methods that should be handled specially
+// func isConversionMethod(name string) bool {
+// 	methods := map[string]bool{
+// 		"AsInt":  true,
+// 		"AsStr":  true,
+// 		"String": true,
+// 		"Int":    true,
+// 	}
+// 	return methods[name]
 // }
 
 // func extractAssertionsFromKscTest(filePath string) []AssertionData {
 // 	fset := token.NewFileSet()
 // 	node, err := parser.ParseFile(fset, filePath, nil, parser.ParseComments)
 // 	if err != nil {
-// 		log.Printf("Warning: Could not read/parse KSC Go test file %s: %v", filePath, err)
+// 		log.Printf("Warning: Could not parse KSC test file %s: %v", filePath, err)
 // 		return nil
 // 	}
 
@@ -427,6 +518,5 @@ package main
 // 	}
 
 // 	ast.Walk(visitor, node)
-// 	log.Printf("Found %d assertions in %s", len(visitor.assertions), filePath)
 // 	return visitor.assertions
 // }

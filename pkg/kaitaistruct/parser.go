@@ -7,9 +7,11 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"strconv"
 	"strings"
 
 	"maps"
+	"regexp"
 	"slices"
 
 	"github.com/google/cel-go/cel"
@@ -129,8 +131,8 @@ func (k *KaitaiInterpreter) Parse(ctx context.Context, stream *kaitai.Stream) (*
 	//kaitai instance is a special case, we need to evaluate them after parsing the root type
 	// This is because instances can reference fields that are only available after parsing the root type
 	if k.schema.Instances != nil {
-		for name, inst := range k.schema.Instances { // TODO: Pass ctx to evaluateInstance
-			val, err := k.evaluateInstance(ctx, inst, rootCtx) // Pass ctx
+		for name, inst := range k.schema.Instances {
+			val, err := k.evaluateInstance(ctx, name, inst, rootCtx) // Pass instance name 'name'
 			if err != nil {
 				return nil, fmt.Errorf("failed evaluating instance '%s': %w", name, err)
 			}
@@ -308,7 +310,7 @@ func (k *KaitaiInterpreter) parseType(ctx context.Context, typeName string, stre
 				successfullyProcessedThisPass := make(map[string]bool)
 
 				for name, inst := range instancesToProcess {
-					val, err := k.evaluateInstance(ctx, inst, typeEvalCtx)
+					val, err := k.evaluateInstance(ctx, name, inst, typeEvalCtx) // Pass instance name
 					if err != nil {
 						// If error is due to missing attribute, it might be a dependency not yet evaluated.
 						// A more sophisticated check could inspect the error for "no such attribute".
@@ -505,6 +507,48 @@ func (k *KaitaiInterpreter) parseBuiltinType(ctx context.Context, typeName strin
 		result.Value = float64(val)
 		return result, true, nil
 	case "str", "strz":
+		// Handled in parseField since we need encoding info
+		return nil, false, nil
+	}
+
+	// Handle bit-sized integers (e.g., b1, b6le, b12be)
+	// Regex to capture bit size and optional endianness (le/be)
+	// Example: b6 -> bits=6, endian="" (defaults to BE)
+	//          b12le -> bits=12, endian="le"
+	//          b32be -> bits=32, endian="be"
+	bitTypeRegex := regexp.MustCompile(`^b(\d+)(le|be)?$`)
+	matches := bitTypeRegex.FindStringSubmatch(typeName)
+
+	if len(matches) > 0 {
+		numBitsStr := matches[1]
+		endianSuffix := ""
+		if len(matches) > 2 { // Check if optional (le/be) group was matched
+			endianSuffix = matches[2]
+		}
+
+		numBits, err := strconv.Atoi(numBitsStr) // Or strconv.Atoi if internalCel.ParseInt is not available/suitable
+		if err != nil {
+			k.logger.ErrorContext(ctx, "Invalid number of bits in bit type", "type_name", typeName, "num_bits_str", numBitsStr, "error", err)
+			return nil, false, fmt.Errorf("invalid number of bits in type '%s': %w", typeName, err)
+		}
+
+		var val uint64 // Read as uint64, KSY 'type' or instances can further refine
+		if endianSuffix == "le" {
+			val, err = stream.ReadBitsIntLe(int(numBits))
+		} else { // Default to Big Endian (if "be" or no suffix)
+			val, err = stream.ReadBitsIntBe(int(numBits))
+		}
+
+		if err != nil {
+			k.logger.ErrorContext(ctx, "Failed to read bits", "type_name", typeName, "num_bits", numBits, "endian", endianSuffix, "error", err)
+			return nil, true, fmt.Errorf("reading %d bits for type '%s': %w", numBits, typeName, err)
+		}
+		result.Value = val
+		k.logger.DebugContext(ctx, "Parsed bit-sized integer", "type_name", typeName, "value", val)
+		return result, true, nil
+	}
+
+	if typeName == "str" || typeName == "strz" { // Moved this check after bit types
 		// Handled in parseField since we need encoding info
 		return nil, false, nil
 	}
@@ -1064,19 +1108,22 @@ func (k *KaitaiInterpreter) parseBytesField(ctx context.Context, field SequenceI
 }
 
 // evaluateInstance calculates an instance field
-func (k *KaitaiInterpreter) evaluateInstance(goCtx context.Context, inst InstanceDef, pCtx *ParseContext) (*ParsedData, error) {
-	k.logger.DebugContext(goCtx, "Evaluating instance", "instance_value_expr", inst.Value) // TODO: Add instance name to log if available
+func (k *KaitaiInterpreter) evaluateInstance(goCtx context.Context, instanceName string, inst InstanceDef, pCtx *ParseContext) (*ParsedData, error) {
+	k.logger.DebugContext(goCtx, "Evaluating instance expression",
+		"instance_name", instanceName, // Use passed instanceName
+		"instance_expr", inst.Value,
+		"pCtx_children_keys", fmt.Sprintf("%v", maps.Keys(pCtx.Children)))
 	// Evaluate the instance expression using CEL
-	value, err := k.evaluateExpression(goCtx, inst.Value, pCtx)
+	value, err := k.evaluateExpression(goCtx, inst.Value, pCtx) // inst.Value is the Kaitai expression string
 	if err != nil {
 		return nil, fmt.Errorf("failed to evaluate instance expression: %w", err)
 	}
 
 	result := &ParsedData{
-		Type:  inst.Type,
+		Type:  inst.Type, // Use inst.Type from KSY if available
 		Value: value,
 	}
-	k.logger.DebugContext(goCtx, "Instance value from CEL", "instance_name", inst.DocRef, "value", value, "value_type", fmt.Sprintf("%T", value))
+	k.logger.DebugContext(goCtx, "Instance value from CEL", "instance_name", instanceName, "value", value, "value_type", fmt.Sprintf("%T", value))
 
 	// Handle type conversion if needed
 	if inst.Type != "" {

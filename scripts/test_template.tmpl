@@ -5,8 +5,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"fmt"
-	"math"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -17,8 +15,7 @@ import (
 	"github.com/kaitai-io/kaitai_struct_go_runtime/kaitai"
 	"github.com/stretchr/testify/require"
 	"github.com/twinfer/kbin-plugin/pkg/kaitaistruct"
-	"github.com/twinfer/kbin-plugin/testutil" 
-	// The alias helps avoid name collisions if {{.FormatName}} is a common word.
+	"github.com/twinfer/kbin-plugin/testutil"
 	{{.FormatPackageAlias}} "github.com/twinfer/kbin-plugin/testdata/formats_kaitai_go_gen/{{.FormatName}}"
 )
 
@@ -42,14 +39,13 @@ func structToMapForSerializerFor{{.StructName}}(t *testing.T, data any) map[stri
 }
 
 func TestParse_{{.StructName}}(t *testing.T) {
-	ksyFilePath := filepath.Join("../../../test/formats", "{{.KsyFileName}}")
+	ksyPath := filepath.Join("../../../test/formats", "{{.KsyFileName}}")
 	ksySchema := loadKsySchemaFor{{.StructName}}(t, ksyPath)
 	interpreter, err := kaitaistruct.NewKaitaiInterpreter(ksySchema, nil)
 	require.NoError(t, err)
 
 	{{if not .TestCases}}
-	// Add a placeholder use of interpreter if there are no .bin test cases but we have assertions
-	{{if .Assertions}} _ = interpreter {{end}}
+	{{if .Assertions}}_ = interpreter{{end}}
 	t.Logf("No binary test cases for {{.FormatName}}, specific value assertions might still run if extracted.")
 	{{end}}
 
@@ -58,12 +54,12 @@ func TestParse_{{.StructName}}(t *testing.T) {
 		samplePath := filepath.Join("../../../test/src", "{{.BinFileRelPath}}")
 		binData, err := os.ReadFile(samplePath)
 		require.NoError(t, err)
-		stream := kaitai.NewStream(bytes.NewReader(binData))
 
+		stream := kaitai.NewStream(bytes.NewReader(binData))
 		customParsed, err := interpreter.Parse(context.Background(), stream)
 		require.NoError(t, err, "Custom parser failed")
 
-		stream = kaitai.NewStream(bytes.NewReader(binData)) // Reset stream
+		stream = kaitai.NewStream(bytes.NewReader(binData))
 		kscParsed := {{$.FormatPackageAlias}}.New{{$.StructName}}()
 		err = kscParsed.Read(stream, kscParsed, kscParsed)
 		require.NoError(t, err, "KSC generated parser failed")
@@ -78,70 +74,104 @@ func TestParse_{{.StructName}}(t *testing.T) {
 		filteredCustomMap := testutil.FilterMapKeys(customMap.(map[string]any), kscMap)
 		if diff := cmp.Diff(kscMap, filteredCustomMap, testutil.NumericComparer, cmpopts.EquateEmpty()); diff != "" {
 			t.Errorf("Parser output mismatch for {{$.FormatName}} (-want ksc_map, +got filtered_custom_map):\n%s", diff)
-			if fullDiff := cmp.Diff(kscMap, customMap, numericComparer, cmpopts.EquateEmpty()); fullDiff != diff && len(customMap.(map[string]any)) != len(filteredCustomMap) {
+			if fullDiff := cmp.Diff(kscMap, customMap, testutil.NumericComparer, cmpopts.EquateEmpty()); fullDiff != diff && len(customMap.(map[string]any)) != len(filteredCustomMap) {
 				t.Logf("Full customMap diff (includes instances):\n%s", fullDiff)
 			}
 		}
 
-		// Perform specific assertions extracted from KSC Go tests
+		// Run extracted assertions
 		{{if $.Assertions}}
-		t.Logf("Running %d specific assertions for {{$.FormatName}} based on KSC tests", len $.Assertions)
-		for _, assertion := range $.Assertions {
+		t.Logf("Running %d specific assertions for {{$.FormatName}} based on KSC tests", {{len .Assertions}})
+		{{range $.Assertions}}
+		{
 			var currentVal any = customMap
 			var foundValue = true
 			var pathTraversed []string
-			for _, pathPart := range assertion.BaseObjectPath {
-				pathTraversed = append(pathTraversed, pathPart)
-				if currentMap, ok := currentVal.(map[string]any); ok {
-					if val, exists := currentMap[pathPart]; exists {
+			
+			// Navigate through the object path
+			objectPath := []string{ {{range .BaseObjectPath}}"{{.}}", {{end}} }
+			for _, pathPart := range objectPath {
+				if !foundValue {
+					break
+				}
+				if m, ok := currentVal.(map[string]any); ok {
+					if val, exists := m[pathPart]; exists {
 						currentVal = val
+						pathTraversed = append(pathTraversed, pathPart)
 					} else {
-						t.Errorf("Assertion failed for {{$.FormatName}}: Path part '%s' (from path %v) not found for KSC expr '%s'. Current map keys: %v", pathPart, pathTraversed, assertion.OriginalKscGoExpr, testutil.GetMapKeys(currentMap))
-						foundValue = false; break
+						t.Errorf("Assertion failed: path part '%s' not found (traversed: %v)", pathPart, pathTraversed)
+						foundValue = false
+						break
 					}
 				} else {
-						t.Errorf("Assertion failed for {{$.FormatName}}: Expected map at path part '%s' (from path %v) for KSC expr '%s', but got %T. Value: %#v", pathPart, pathTraversed, assertion.OriginalKscGoExpr, currentVal, currentVal)
-
-					foundValue = false; break
+					t.Errorf("Assertion failed: expected map at '%s', got %T", pathPart, currentVal)
+					foundValue = false
+					break
 				}
 			}
 
 			if foundValue {
-				var finalActualValue any
-				switch assertion.Operation {
+				var actual any
+				switch "{{.Operation}}" {
 				case "LEN":
-					if arr, ok := currentVal.([]any); ok { finalActualValue = len(arr)
-					} else if arrBytes, ok := currentVal.([]byte); ok { finalActualValue = len(arrBytes)
-					} else { t.Errorf("LEN op on non-array/slice %T for KSC expr '%s'", currentVal, assertion.OriginalKscGoExpr); foundValue = false }
+					switch val := currentVal.(type) {
+					case []any: 
+						actual = len(val)
+					case []byte: 
+						actual = len(val)
+					default:
+						t.Errorf("LEN operation on unsupported type %T", currentVal)
+						foundValue = false
+					}
 				case "INDEX":
-					idx, errIdx := strconv.Atoi(assertion.OperationArg)
-					if errIdx != nil { t.Errorf("Invalid index '%s' for KSC expr '%s'", assertion.OperationArg, assertion.OriginalKscGoExpr); foundValue = false; break }
-					if arr, ok := currentVal.([]any); ok {
-						if idx >= 0 && idx < len(arr) { finalActualValue = arr[idx] } else { t.Errorf("Index %d out of bounds (len %d) for KSC expr '%s'", idx, len(arr), assertion.OriginalKscGoExpr); foundValue = false }
-					} else if arrBytes, ok := currentVal.([]byte); ok {
-						if idx >= 0 && idx < len(arrBytes) { finalActualValue = arrBytes[idx] } else { t.Errorf("Index %d out of bounds (len %d) for KSC expr '%s'", idx, len(arrBytes), assertion.OriginalKscGoExpr); foundValue = false }
-					} else { t.Errorf("INDEX op on non-array/slice %T for KSC expr '%s'", currentVal, assertion.OriginalKscGoExpr); foundValue = false }
-				case "GETTER": // BaseObjectPath includes the getter/instance name
-					finalActualValue = currentVal
-				default: // Direct access
-					finalActualValue = currentVal
+					idx, err := strconv.Atoi("{{.OperationArg}}")
+					if err != nil {
+						t.Errorf("Invalid index '{{.OperationArg}}'")
+						foundValue = false
+					} else {
+						switch val := currentVal.(type) {
+						case []any:
+							if idx >= 0 && idx < len(val) {
+								actual = val[idx]
+							} else {
+								t.Errorf("Index out of range (%d)", idx)
+								foundValue = false
+							}
+						case []byte:
+							if idx >= 0 && idx < len(val) {
+								actual = val[idx]
+							} else {
+								t.Errorf("Index out of range (%d)", idx)
+								foundValue = false
+							}
+						default:
+							t.Errorf("INDEX operation on unsupported type %T", currentVal)
+							foundValue = false
+						}
+					}
+				default: // Direct or GETTER
+					actual = currentVal
 				}
-				if foundValue { require.EqualValues(t, {{printf "%s" .ExpectedValueRaw}}, finalActualValue, "Mismatch for KSC expr: %s (Path: %v, Op: %s, OpArg: %s)", assertion.OriginalKscGoExpr, assertion.BaseObjectPath, assertion.Operation, assertion.OperationArg) }
+				
+				if foundValue {
+					expected := {{.ExpectedValueRaw}}
+					require.EqualValues(t, expected, actual, "Assertion mismatch for KSC expr '{{.OriginalKscGoExpr}}'")
+				}
 			}
 		}
+		{{end}}
 		{{end}}
 	})
 	{{end}}
 }
 
 func TestSerialize_{{.StructName}}(t *testing.T) {
-	ksyFilePath := filepath.Join("../../../test/formats", "{{.KsyFileName}}")
+	ksyPath := filepath.Join("../../../test/formats", "{{.KsyFileName}}")
 	ksySchema := loadKsySchemaFor{{.StructName}}(t, ksyPath)
 	serializer, err := kaitaistruct.NewKaitaiSerializer(ksySchema, nil)
 	require.NoError(t, err)
 
 	{{if not .TestCases}}
-	// Add a placeholder use of serializer if there are no .bin test cases
 	_ = serializer
 	t.Logf("No binary test cases for {{.FormatName}}, skipping detailed serialize tests.")
 	{{end}}
@@ -155,21 +185,19 @@ func TestSerialize_{{.StructName}}(t *testing.T) {
 		goldenStream := kaitai.NewStream(bytes.NewReader(binData))
 		goldenStruct := {{$.FormatPackageAlias}}.New{{$.StructName}}()
 		err = goldenStruct.Read(goldenStream, goldenStruct, goldenStruct)
-		require.NoError(t, err, "Failed to parse golden .bin with KSC parser")
+		require.NoError(t, err)
 
 		inputMap := structToMapForSerializerFor{{$.StructName}}(t, goldenStruct)
-		t.Logf("Serializer inputMap for {{.Name}}: %#v", inputMap)
-
 		serializedBytes, err := serializer.Serialize(context.Background(), inputMap)
-		require.NoError(t, err, "Custom serializer failed")
+		require.NoError(t, err)
 
 		reparsedStream := kaitai.NewStream(bytes.NewReader(serializedBytes))
 		reparsedStruct := {{$.FormatPackageAlias}}.New{{$.StructName}}()
 		err = reparsedStruct.Read(reparsedStream, reparsedStruct, reparsedStruct)
-		require.NoError(t, err, "Failed to parse bytes from custom serializer with KSC parser")
+		require.NoError(t, err)
 
 		if diff := cmp.Diff(goldenStruct, reparsedStruct, cmpopts.EquateEmpty()); diff != "" {
-			t.Errorf("Serializer output mismatch for {{.Name}} (-want golden_ksc_struct, +got reparsed_ksc_struct):\n%s", diff)
+			t.Errorf("Serializer output mismatch (-golden, +reparsed):\n%s", diff)
 		}
 	})
 	{{end}}
