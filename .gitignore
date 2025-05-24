@@ -24,8 +24,8 @@ vendor/
 .github/
 *.swp
 *.swo
-test/*
-testdata/*
+test/
+testdata/
 # OS specific files
 .DS_Store
 Thumbs.db
