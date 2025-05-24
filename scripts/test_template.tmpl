@@ -2,155 +2,203 @@
 package formats_test
 
 import (
-    "bytes"
-    "context"
-    "encoding/json"
-    "fmt"
-    "os"
-    "path/filepath"
-    "testing"
+	"bytes"
+	"context"
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"strconv"
+	"testing"
 
-    "github.com/google/go-cmp/cmp"
-    "github.com/kaitai-io/kaitai_struct_go_runtime/kaitai"
-    "github.com/stretchr/testify/require"
-    "github.com/twinfer/kbin-plugin/pkg/kaitaistruct"
-    // Adjust the import path to where your ksc-generated Go files will reside
-    // The alias helps avoid name collisions if {{.FormatName}} is a common word.
-    {{.FormatPackageAlias}} "github.com/twinfer/kbin-plugin/testdata/formats_kaitai_go_gen/{{.FormatName}}"
+	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
+	"github.com/kaitai-io/kaitai_struct_go_runtime/kaitai"
+	"github.com/stretchr/testify/require"
+	"github.com/twinfer/kbin-plugin/pkg/kaitaistruct"
+	"github.com/twinfer/kbin-plugin/testutil"
+	{{.FormatPackageAlias}} "github.com/twinfer/kbin-plugin/testdata/formats_kaitai_go_gen/{{.FormatName}}"
 )
 
-// loadKsySchema is a helper to load a .ksy file for the interpreter.
-// It's defined once per generated test file.
 func loadKsySchemaFor{{.StructName}}(t *testing.T, ksyPath string) *kaitaistruct.KaitaiSchema {
-    yamlData, err := os.ReadFile(ksyPath)
-    require.NoError(t, err, "Failed to read KSY file: %s", ksyPath)
-    schema, err := kaitaistruct.NewKaitaiSchemaFromYAML(yamlData)
-    require.NoError(t, err, "Failed to parse KSY YAML: %s", ksyPath)
-    return schema
+	yamlData, err := os.ReadFile(ksyPath)
+	require.NoError(t, err, "Failed to read KSY file: %s", ksyPath)
+	schema, err := kaitaistruct.NewKaitaiSchemaFromYAML(yamlData)
+	require.NoError(t, err, "Failed to parse KSY YAML: %s", ksyPath)
+	return schema
 }
 
-// structToMapForSerializer converts a KSC-generated struct to map[string]any
-// for the custom serializer. This is a placeholder and needs robust implementation.
 func structToMapForSerializerFor{{.StructName}}(t *testing.T, data any) map[string]any {
-    jsonData, err := json.Marshal(data)
-    require.NoError(t, err, "Failed to marshal KSC struct to JSON")
-
-    var resultMap map[string]any
-    if err := json.Unmarshal(jsonData, &resultMap); err != nil { // Unmarshal into a temporary map
-        t.Logf("Warning: Could not unmarshal KSC struct directly to map for serializer (type: %T). Wrapping in '_value'. Error: %v", data, err)
-        return map[string]any{"_value": data}
-    }
-    return convertKeysToLowerRecursive(resultMap) // Convert keys before returningreturn convertKeysToLowerRecursive(resultMap) // Convert keys before returning
+	jsonData, err := json.Marshal(data)
+	require.NoError(t, err, "Failed to marshal KSC struct to JSON")
+	var resultMap map[string]any
+	if err := json.Unmarshal(jsonData, &resultMap); err != nil {
+		t.Logf("Warning: Could not unmarshal KSC struct directly to map for serializer (type: %T). Wrapping in '_value'. Error: %v", data, err)
+		return map[string]any{"_value": data}
+	}
+	return testutil.ConvertKeysToLowerRecursive(resultMap)
 }
-
-// convertKeysToLowerRecursive recursively converts map keys to lowercase.
-func convertKeysToLowerRecursive(data any) any {
-    if m, ok := data.(map[string]any); ok {
-        lowerMap := make(map[string]any)
-        for k, v := range m {
-            lowerMap[strings.ToLower(k)] = convertKeysToLowerRecursive(v)
-        }
-        return lowerMap
-    }
-    if s, ok := data.([]any); ok {
-        lowerSlice := make([]any, len(s))
-        for i, v := range s {
-            lowerSlice[i] = convertKeysToLowerRecursive(v)
-        }
-        return lowerSlice
-    }
-    return data
-}
-
-
-
 
 func TestParse_{{.StructName}}(t *testing.T) {
-    ksyFilePath := filepath.Join("../../../test/formats", "{{.KsyFileName}}")
-    ksySchema := loadKsySchemaFor{{.StructName}}(t, ksyFilePath)
+	ksyPath := filepath.Join("../../../test/formats", "{{.KsyFileName}}")
+	ksySchema := loadKsySchemaFor{{.StructName}}(t, ksyPath)
+	interpreter, err := kaitaistruct.NewKaitaiInterpreter(ksySchema, nil)
+	require.NoError(t, err)
 
-    interpreter, err := kaitaistruct.NewKaitaiInterpreter(ksySchema, nil)
-    require.NoError(t, err)
+	{{if not .TestCases}}
+	{{if .Assertions}}_ = interpreter{{end}}
+	t.Logf("No binary test cases for {{.FormatName}}, specific value assertions might still run if extracted.")
+	{{end}}
 
-    {{range .TestCases}}
-    t.Run("{{$.FormatName}}_{{.Name}}_Parse", func(t *testing.T) {
-        samplePath := filepath.Join("../../../test/src", "{{.BinFileRelPath}}")
-        binData, err := os.ReadFile(samplePath)
-        require.NoError(t, err)
+	{{range .TestCases}}
+	t.Run("{{$.FormatName}}_{{.Name}}_Parse", func(t *testing.T) {
+		samplePath := filepath.Join("../../../test/src", "{{.BinFileRelPath}}")
+		binData, err := os.ReadFile(samplePath)
+		require.NoError(t, err)
 
-        stream := kaitai.NewStream(bytes.NewReader(binData))
+		stream := kaitai.NewStream(bytes.NewReader(binData))
+		customParsed, err := interpreter.Parse(context.Background(), stream)
+		require.NoError(t, err, "Custom parser failed")
 
-        // 1. Parse with custom KaitaiInterpreter
-        customParsed, err := interpreter.Parse(context.Background(), stream)
-        require.NoError(t, err, "Custom parser failed")
+		stream = kaitai.NewStream(bytes.NewReader(binData))
+		kscParsed := {{$.FormatPackageAlias}}.New{{$.StructName}}()
+		err = kscParsed.Read(stream, kscParsed, kscParsed)
+		require.NoError(t, err, "KSC generated parser failed")
 
-        // Reset stream for ksc parser
-        stream = kaitai.NewStream(bytes.NewReader(binData))
+		customMap := kaitaistruct.ParsedDataToMap(customParsed)
+		kscJSON, err := json.Marshal(kscParsed)
+		require.NoError(t, err, "Failed to marshal KSC parsed struct to JSON")
+		var kscMap map[string]any
+		err = json.Unmarshal(kscJSON, &kscMap)
+		require.NoError(t, err, "Failed to unmarshal KSC JSON to map")
 
-        // 2. Parse with ksc-generated Go struct
-        kscParsed := {{$.FormatPackageAlias}}.New{{$.StructName}}() // Use $ here
-        err = kscParsed.Read(stream, kscParsed, kscParsed) 
-        require.NoError(t, err, "KSC generated parser failed")
+		filteredCustomMap := testutil.FilterMapKeys(customMap.(map[string]any), kscMap)
+		if diff := cmp.Diff(kscMap, filteredCustomMap, testutil.NumericComparer, cmpopts.EquateEmpty()); diff != "" {
+			t.Errorf("Parser output mismatch for {{$.FormatName}} (-want ksc_map, +got filtered_custom_map):\n%s", diff)
+			if fullDiff := cmp.Diff(kscMap, customMap, testutil.NumericComparer, cmpopts.EquateEmpty()); fullDiff != diff && len(customMap.(map[string]any)) != len(filteredCustomMap) {
+				t.Logf("Full customMap diff (includes instances):\n%s", fullDiff)
+			}
+		}
 
-        // 3. Compare results
-        customMap := kaitaistruct.ParsedDataToMap(customParsed)
+		// Run extracted assertions
+		{{if $.Assertions}}
+		t.Logf("Running %d specific assertions for {{$.FormatName}} based on KSC tests", {{len .Assertions}})
+		{{range $.Assertions}}
+		{
+			var currentVal any = customMap
+			var foundValue = true
+			var pathTraversed []string
+			
+			// Navigate through the object path
+			objectPath := []string{ {{range .BaseObjectPath}}"{{.}}", {{end}} }
+			for _, pathPart := range objectPath {
+				if !foundValue {
+					break
+				}
+				if m, ok := currentVal.(map[string]any); ok {
+					if val, exists := m[pathPart]; exists {
+						currentVal = val
+						pathTraversed = append(pathTraversed, pathPart)
+					} else {
+						t.Errorf("Assertion failed: path part '%s' not found (traversed: %v)", pathPart, pathTraversed)
+						foundValue = false
+						break
+					}
+				} else {
+					t.Errorf("Assertion failed: expected map at '%s', got %T", pathPart, currentVal)
+					foundValue = false
+					break
+				}
+			}
 
-        kscJSON, err := json.Marshal(kscParsed)
-        require.NoError(t, err, "Failed to marshal KSC parsed struct to JSON")
-
-        var kscMap map[string]any
-        err = json.Unmarshal(kscJSON, &kscMap)
-        require.NoError(t, err, "Failed to unmarshal KSC JSON to map")
-
-        if diff := cmp.Diff(kscMap, customMap); diff != "" {
-            t.Errorf("Parser output mismatch for {{.Name}} (-want ksc_map, +got custom_map):\n%s", diff)
-        }
-    })
-        {{else}}
-        // Add a placeholder use of interpreter if there are no test cases
-        _ = interpreter
-        t.Logf("No binary test cases for {{$.FormatName}}, skipping detailed parse tests.")
-    {{end}}
+			if foundValue {
+				var actual any
+				switch "{{.Operation}}" {
+				case "LEN":
+					switch val := currentVal.(type) {
+					case []any: 
+						actual = len(val)
+					case []byte: 
+						actual = len(val)
+					default:
+						t.Errorf("LEN operation on unsupported type %T", currentVal)
+						foundValue = false
+					}
+				case "INDEX":
+					idx, err := strconv.Atoi("{{.OperationArg}}")
+					if err != nil {
+						t.Errorf("Invalid index '{{.OperationArg}}'")
+						foundValue = false
+					} else {
+						switch val := currentVal.(type) {
+						case []any:
+							if idx >= 0 && idx < len(val) {
+								actual = val[idx]
+							} else {
+								t.Errorf("Index out of range (%d)", idx)
+								foundValue = false
+							}
+						case []byte:
+							if idx >= 0 && idx < len(val) {
+								actual = val[idx]
+							} else {
+								t.Errorf("Index out of range (%d)", idx)
+								foundValue = false
+							}
+						default:
+							t.Errorf("INDEX operation on unsupported type %T", currentVal)
+							foundValue = false
+						}
+					}
+				default: // Direct or GETTER
+					actual = currentVal
+				}
+				
+				if foundValue {
+					expected := {{.ExpectedValueRaw}}
+					require.EqualValues(t, expected, actual, "Assertion mismatch for KSC expr '{{.OriginalKscGoExpr}}'")
+				}
+			}
+		}
+		{{end}}
+		{{end}}
+	})
+	{{end}}
 }
 
 func TestSerialize_{{.StructName}}(t *testing.T) {
-    ksyFilePath := filepath.Join("../../../test/formats", "{{.KsyFileName}}")
-    ksySchema := loadKsySchemaFor{{.StructName}}(t, ksyFilePath)
+	ksyPath := filepath.Join("../../../test/formats", "{{.KsyFileName}}")
+	ksySchema := loadKsySchemaFor{{.StructName}}(t, ksyPath)
+	serializer, err := kaitaistruct.NewKaitaiSerializer(ksySchema, nil)
+	require.NoError(t, err)
 
-    serializer, err := kaitaistruct.NewKaitaiSerializer(ksySchema, nil)
-    require.NoError(t, err)
-
-    {{range .TestCases}}
-    t.Run("{{$.FormatName}}_{{.Name}}_Serialize", func(t *testing.T) {
-        samplePath := filepath.Join("../../../test/src", "{{.BinFileRelPath}}")
-        binData, err := os.ReadFile(samplePath)
-        require.NoError(t, err)
-
-        goldenStream := kaitai.NewStream(bytes.NewReader(binData))
-        // Corrected: Use $ to access fields from the root TemplateData context
-        goldenStruct := {{$.FormatPackageAlias}}.New{{$.StructName}}()
-        err = goldenStruct.Read(goldenStream, goldenStruct, goldenStruct)
-        require.NoError(t, err, "Failed to parse golden .bin with KSC parser")
-
-        // Corrected: Use $ to access fields from the root TemplateData context
-        inputMap := structToMapForSerializerFor{{$.StructName}}(t, goldenStruct)
-
-        serializedBytes, err := serializer.Serialize(context.Background(), inputMap)
-        require.NoError(t, err, "Custom serializer failed")
-
-        reparsedStream := kaitai.NewStream(bytes.NewReader(serializedBytes))
-        // Corrected: Use $ to access fields from the root TemplateData context
-        reparsedStruct := {{$.FormatPackageAlias}}.New{{$.StructName}}()
-        err = reparsedStruct.Read(reparsedStream, reparsedStruct, reparsedStruct)
-        require.NoError(t, err, "Failed to parse bytes from custom serializer with KSC parser")
-
-        if diff := cmp.Diff(goldenStruct, reparsedStruct); diff != "" {
-            t.Errorf("Serializer output mismatch for {{.Name}} (-want golden_ksc_struct, +got reparsed_ksc_struct):\n%s", diff)
-        }
-    })
-    {{else}}
-	// Add a placeholder use of serializer if there are no test cases
+	{{if not .TestCases}}
 	_ = serializer
-	t.Logf("No binary test cases for {{$.FormatName}}, skipping detailed serialize tests.")
-    {{end}}
+	t.Logf("No binary test cases for {{.FormatName}}, skipping detailed serialize tests.")
+	{{end}}
+
+	{{range .TestCases}}
+	t.Run("{{$.FormatName}}_{{.Name}}_Serialize", func(t *testing.T) {
+		samplePath := filepath.Join("../../../test/src", "{{.BinFileRelPath}}")
+		binData, err := os.ReadFile(samplePath)
+		require.NoError(t, err)
+
+		goldenStream := kaitai.NewStream(bytes.NewReader(binData))
+		goldenStruct := {{$.FormatPackageAlias}}.New{{$.StructName}}()
+		err = goldenStruct.Read(goldenStream, goldenStruct, goldenStruct)
+		require.NoError(t, err)
+
+		inputMap := structToMapForSerializerFor{{$.StructName}}(t, goldenStruct)
+		serializedBytes, err := serializer.Serialize(context.Background(), inputMap)
+		require.NoError(t, err)
+
+		reparsedStream := kaitai.NewStream(bytes.NewReader(serializedBytes))
+		reparsedStruct := {{$.FormatPackageAlias}}.New{{$.StructName}}()
+		err = reparsedStruct.Read(reparsedStream, reparsedStruct, reparsedStruct)
+		require.NoError(t, err)
+
+		if diff := cmp.Diff(goldenStruct, reparsedStruct, cmpopts.EquateEmpty()); diff != "" {
+			t.Errorf("Serializer output mismatch (-golden, +reparsed):\n%s", diff)
+		}
+	})
+	{{end}}
 }

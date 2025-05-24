@@ -125,18 +125,23 @@ func (t *ASTTransformer) VisitBinOp(node *expr.BinOp) error {
 			celFuncName = "bitShiftRight"
 		}
 		t.sb.WriteString(celFuncName)
+		// Common structure for function calls
 		t.sb.WriteString("(")
 		err := node.Arg1.Accept(t)
 		if err != nil {
 			return err
 		}
 		t.sb.WriteString(", ")
+		// Process Arg2 for binary function
 		err = node.Arg2.Accept(t)
 		if err != nil {
 			return err
 		}
 		t.sb.WriteString(")")
 		return nil
+	// START: Modified section for arithmetic to use custom functions
+	// REVERTED: Rely on cel.StdLib() for standard arithmetic, comparisons, and logical ops.
+	// Custom 'add' and 'mul' functions are still available if explicitly called in KSY.
 	default:
 		// For standard infix operators
 		t.sb.WriteString("(") // Outer parentheses for the whole operation for safety, CEL precedence will apply
@@ -147,11 +152,11 @@ func (t *ASTTransformer) VisitBinOp(node *expr.BinOp) error {
 
 		operatorStr := ""
 		switch node.Op {
-		case expr.BinOpAdd:
+		case expr.BinOpAdd: // Will handle both numeric addition and string concat via cel.StdLib()
 			operatorStr = " + "
 		case expr.BinOpSub:
 			operatorStr = " - "
-		case expr.BinOpMul:
+		case expr.BinOpMul: // Will handle numeric multiplication via cel.StdLib()
 			operatorStr = " * "
 		case expr.BinOpDiv:
 			operatorStr = " / "
@@ -252,6 +257,17 @@ func (t *ASTTransformer) VisitAttr(node *expr.Attr) error {
 		// Here, we just write the receiver.attribute form.
 	}
 
+	// Handle .to_s conversion specifically by mapping to your custom "to_s" CEL function
+	if node.Name == "to_s" {
+		t.sb.WriteString("to_s(")   // Call your custom "to_s" CEL function
+		err := node.Value.Accept(t) // The object to be converted to string (e.g., digit1)
+		if err != nil {
+			return err
+		}
+		t.sb.WriteString(")")
+		return nil
+	}
+	//new end
 	// Generic attribute access: receiver.name
 	err := node.Value.Accept(t) // receiver
 	if err != nil {
@@ -368,31 +384,30 @@ func (t *ASTTransformer) VisitCall(node *expr.Call) error {
 
 func (t *ASTTransformer) VisitTernaryOp(node *expr.TernaryOp) error {
 	// Map Kaitai ternary operator to CEL ternary function call
-	t.sb.WriteString("ternary(")
+	// Generate native CEL ternary: (condition ? true_value : false_value)
+	t.sb.WriteString("(") // Outer parentheses for the whole ternary operation
 
 	// Transform condition
 	err := node.Cond.Accept(t)
 	if err != nil {
 		return err
 	}
-
-	t.sb.WriteString(", ")
+	t.sb.WriteString(" ? ")
 
 	// Transform true expression
 	err = node.IfTrue.Accept(t)
 	if err != nil {
 		return err
 	}
-
-	t.sb.WriteString(", ")
+	t.sb.WriteString(" : ")
 
 	// Transform false expression
 	err = node.IfFalse.Accept(t)
 	if err != nil {
 		return err
 	}
-
 	t.sb.WriteString(")")
+	t.sb.WriteString(")") // Close outer parentheses
 	return nil
 }
 

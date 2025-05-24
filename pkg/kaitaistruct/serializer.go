@@ -7,6 +7,8 @@ import (
 	"log/slog"
 	"strings"
 
+	"maps"
+
 	"github.com/google/cel-go/cel"
 	"github.com/kaitai-io/kaitai_struct_go_runtime/kaitai"
 	internalCel "github.com/twinfer/kbin-plugin/internal/cel"
@@ -55,9 +57,7 @@ func (ctx *SerializeContext) AsActivation() (cel.Activation, error) {
 
 	// Add current context values
 	if ctx.Children != nil {
-		for k, v := range ctx.Children {
-			vars[k] = v
-		}
+		maps.Copy(vars, ctx.Children)
 	}
 
 	// Add special variables

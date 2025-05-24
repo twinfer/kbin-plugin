@@ -21,10 +21,13 @@ vendor/
 # IDE files
 .idea/
 .vscode/
+.github/
 *.swp
 *.swo
-
+test/
+testdata/
 # OS specific files
 .DS_Store
 Thumbs.db
 temp.go
+test/kaitaistruct
