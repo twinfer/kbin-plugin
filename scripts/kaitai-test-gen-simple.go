@@ -280,8 +280,16 @@ func main() {
 }
 
 func getProjectRoot() string {
-	_, b, _, _ := runtime.Caller(0)
-	return filepath.Clean(filepath.Join(filepath.Dir(b), ".."))
+	_, b, _, ok := runtime.Caller(0)
+	if !ok {
+		log.Fatal("Failed to get caller information to determine script directory")
+	}
+	scriptDir := filepath.Dir(b) // Directory of generate_kaitai_tests.go
+	// Assume script is in PROJECT_ROOT/scripts/
+	// So, project root is one level up from scriptDir
+	fmt.Println("Project root determined as:", filepath.Clean(filepath.Join(scriptDir, "..")))
+	return filepath.Clean(filepath.Join(scriptDir, ".."))
+
 }
 
 func toGoPackageName(name string) string {
