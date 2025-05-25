@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"regexp"
 	"strings"
 
 	"maps"
@@ -20,6 +21,7 @@ type KaitaiSerializer struct {
 	schema          *KaitaiSchema
 	expressionPool  *internalCel.ExpressionPool
 	processRegistry *ProcessRegistry
+	typeStack       []string  // Stack of type names being processed for hierarchical resolution
 	logger          *slog.Logger
 }
 
@@ -142,12 +144,13 @@ func (k *KaitaiSerializer) serializeType(goCtx context.Context, typeName string,
 		}
 	}
 
-	// Try to find the type in the schema types
-	typeObj, found := k.schema.Types[typeName]
+	// Try to find the type in the schema types using hierarchical resolution
+	typePtr, found := k.resolveTypeInHierarchy(typeName)
 	if !found {
 		k.logger.ErrorContext(goCtx, "Unknown type for serialization", "type_name", typeName)
 		return fmt.Errorf("unknown type: %s", typeName)
 	}
+	typeObj := *typePtr
 
 	// Serialize type object
 	dataMap, ok := data.(map[string]any)
@@ -163,6 +166,13 @@ func (k *KaitaiSerializer) serializeType(goCtx context.Context, typeName string,
 		Parent:   sCtx,
 		Root:     sCtx.Root,
 	}
+
+	// Push type to stack for hierarchical resolution
+	k.typeStack = append(k.typeStack, typeName)
+	defer func() {
+		// Pop type from stack when done
+		k.typeStack = k.typeStack[:len(k.typeStack)-1]
+	}()
 
 	// Pre-evaluate instances for this type and add them to the fieldCtx.Children
 	// This makes them available for expressions in seq items (if, size, repeat-expr, etc.)
@@ -330,6 +340,11 @@ func (k *KaitaiSerializer) isBuiltinTypeName(typeName string) bool {
 	case "str", "strz", "bytes":
 		return true
 	default:
+		// Check for bit field types (b1, b2, b3, etc.)
+		bitTypeRegex := regexp.MustCompile(`^b(\d+)$`)
+		if bitTypeRegex.MatchString(baseType) {
+			return true
+		}
 		return false
 	}
 }
@@ -918,6 +933,30 @@ func (k *KaitaiSerializer) resolveSwitchTypeForSerialization(goCtx context.Conte
 		return "", fmt.Errorf("no case matching switch value '%v' (key: '%s') for expression '%s' and no default '_' case was found",
 			switchOnVal, switchKey, spec.switchOn)
 	}
+}
+
+// resolveTypeInHierarchy resolves a type name by searching through nested type scopes
+func (k *KaitaiSerializer) resolveTypeInHierarchy(typeName string) (*Type, bool) {
+	// Try to resolve in current nested type context first
+	// Walk up the type stack to find the type in nested scopes
+	for i := len(k.typeStack) - 1; i >= 0; i-- {
+		currentTypeName := k.typeStack[i]
+		if currentType, found := k.schema.Types[currentTypeName]; found {
+			// Check if the type has nested types
+			if currentType.Types != nil {
+				if nestedType, found := currentType.Types[typeName]; found {
+					return nestedType, true
+				}
+			}
+		}
+	}
+	
+	// Fall back to global type lookup
+	if globalType, found := k.schema.Types[typeName]; found {
+		return &globalType, true
+	}
+	
+	return nil, false
 }
 
 // Type conversion helpers

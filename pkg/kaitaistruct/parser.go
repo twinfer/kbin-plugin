@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"reflect"
 	"strconv"
 	"strings"
 
@@ -52,7 +53,7 @@ type ParsedData struct {
 func NewKaitaiInterpreter(schema *KaitaiSchema, logger *slog.Logger) (*KaitaiInterpreter, error) {
 	// Create enhanced CEL environment with Kaitai types
 	enumRegistry := kaitaicel.NewEnumRegistry()
-	
+
 	// Register any enums from the schema
 	if schema.Enums != nil {
 		for enumName, enumDef := range schema.Enums {
@@ -278,7 +279,6 @@ func (k *KaitaiInterpreter) parseType(ctx context.Context, typeName string, stre
 
 	// Look for the type in the schema
 	var typeObj Type
-	var found bool
 
 	if typeName == k.schema.Meta.ID {
 		// This is the root type being parsed directly (not as a field of another type)
@@ -303,14 +303,15 @@ func (k *KaitaiInterpreter) parseType(ctx context.Context, typeName string, stre
 				return nil, fmt.Errorf("parsing field '%s' in root type '%s': %w", seq.ID, typeName, err)
 			}
 			if field != nil { // Only add if not nil
-				result.Children[seq.ID] = field        // Store the ParsedData
+				result.Children[seq.ID] = field // Store the ParsedData
 				// Store the underlying value for expressions (convert kaitaicel types)
 				evalCtx.Children[seq.ID] = convertForCELActivation(field.Value)
 			}
 		}
 
 		return result, nil
-	} else if typeObj, found = k.schema.Types[typeName]; found {
+	} else if typePtr, found := k.resolveTypeInHierarchy(typeName); found {
+		typeObj = *typePtr
 		// Create evaluation context for this specific type
 		typeEvalCtx := &ParseContext{
 			Children: make(map[string]any),
@@ -339,7 +340,7 @@ func (k *KaitaiInterpreter) parseType(ctx context.Context, typeName string, stre
 			}
 
 			if parsedFieldData != nil { // Only add if not nil (e.g., conditional field was skipped)
-				result.Children[seq.ID] = parsedFieldData            // Store the ParsedData
+				result.Children[seq.ID] = parsedFieldData // Store the ParsedData
 				// Store the underlying value for expressions (convert kaitaicel types)
 				typeEvalCtx.Children[seq.ID] = convertForCELActivation(parsedFieldData.Value)
 			}
@@ -350,12 +351,7 @@ func (k *KaitaiInterpreter) parseType(ctx context.Context, typeName string, stre
 			k.logger.DebugContext(ctx, "Processing instances for type", "type_name", typeName, "instance_count", len(typeObj.Instances))
 
 			instancesToProcess := make(map[string]InstanceDef)
-			for name, inst := range typeObj.Instances {
-				instancesToProcess[name] = inst
-				// Eagerly add instance definition to context so it can be referenced if needed,
-				// though its value will be evaluated. This is more for introspection.
-				// typeEvalCtx.Children[name] = inst // This might be too early or confusing for CEL
-			}
+			maps.Copy(instancesToProcess, typeObj.Instances)
 
 			maxPasses := len(instancesToProcess) + 2 // Allow a couple of extra passes for dependencies
 			processedInLastPass := -1
@@ -425,13 +421,13 @@ func (k *KaitaiInterpreter) parseBuiltinType(ctx context.Context, typeName strin
 			k.logger.ErrorContext(ctx, "Failed to read bytes for type", "type", typeName, "size", size, "error", err)
 			return nil, true, fmt.Errorf("reading %d bytes for %s: %w", size, typeName, err)
 		}
-		
+
 		kaitaiVal, err := readerFunc(rawData, 0)
 		if err != nil {
 			k.logger.ErrorContext(ctx, "Failed to create kaitai type", "type", typeName, "error", err)
 			return nil, true, fmt.Errorf("creating kaitai type %s: %w", typeName, err)
 		}
-		
+
 		result.Value = kaitaiVal
 		k.logger.DebugContext(ctx, "Successfully parsed kaitai type", "type", typeName, "value", kaitaiVal.Value())
 		return result, true, nil
@@ -674,7 +670,7 @@ func (k *KaitaiInterpreter) parseField(ctx context.Context, field SequenceItem, 
 
 	// Handle repeat attribute
 	if field.Repeat != "" {
-		return k.parseRepeatedField(ctx, field, pCtx, size)
+		return k.parseRepeatedField(ctx, field, pCtx)
 	}
 
 	// Handle contents attribute
@@ -767,7 +763,25 @@ func (k *KaitaiInterpreter) parseField(ctx context.Context, field SequenceItem, 
 
 	k.logger.DebugContext(ctx, "Recursively parsing field type", "field_id", field.ID, "field_type_to_parse", actualFieldType)
 	// Parse using the appropriate stream
-	return k.parseType(ctx, actualFieldType, subStream)
+	result, err := k.parseType(ctx, actualFieldType, subStream)
+	if err != nil {
+		return nil, err
+	}
+
+	// Convert to enum if field has enum attribute
+	if field.Enum != "" {
+		k.logger.DebugContext(ctx, "Converting field to enum", "field_id", field.ID, "enum_name", field.Enum)
+		if enumResult, enumErr := k.convertToEnum(ctx, result, field.Enum); enumErr != nil {
+			k.logger.WarnContext(ctx, "Failed to convert field to enum", "field_id", field.ID, "enum_name", field.Enum, "error", enumErr)
+			// Return original result if enum conversion fails
+			return result, nil
+		} else {
+			k.logger.DebugContext(ctx, "Successfully converted field to enum", "field_id", field.ID, "enum_name", field.Enum)
+			return enumResult, nil
+		}
+	}
+
+	return result, nil
 }
 
 // processDataWithCEL processes data using CEL expressions
@@ -818,9 +832,7 @@ func (k *KaitaiInterpreter) processDataWithCEL(ctx context.Context, data []byte,
 	// Then add _parent, _root, _io, and finally the 'input' for the process function.
 	evalMap := make(map[string]any)
 	if pCtx.Children != nil {
-		for k, v := range pCtx.Children {
-			evalMap[k] = v
-		}
+		maps.Copy(evalMap, pCtx.Children)
 	}
 	if pCtx.Parent != nil {
 		evalMap["_parent"] = pCtx.Parent.Children // Expose parent's children map
@@ -846,7 +858,7 @@ func (k *KaitaiInterpreter) processDataWithCEL(ctx context.Context, data []byte,
 }
 
 // parseRepeatedField handles repeating fields
-func (k *KaitaiInterpreter) parseRepeatedField(ctx context.Context, field SequenceItem, pCtx *ParseContext, size int) (*ParsedData, error) {
+func (k *KaitaiInterpreter) parseRepeatedField(ctx context.Context, field SequenceItem, pCtx *ParseContext) (*ParsedData, error) {
 	k.logger.DebugContext(ctx, "Parsing repeated field", "field_id", field.ID, "repeat_type", field.Repeat, "repeat_expr", field.RepeatExpr)
 	result := &ParsedData{
 		Type:    field.Type,
@@ -903,7 +915,7 @@ func (k *KaitaiInterpreter) parseRepeatedField(ctx context.Context, field Sequen
 	items := make([]*ParsedData, 0)
 
 	if count > 0 {
-		for i := 0; i < count; i++ {
+		for i := range count {
 			select {
 			case <-ctx.Done():
 				k.logger.InfoContext(ctx, "Parsing repeated field cancelled", "field_id", field.ID, "iteration", i)
@@ -1020,7 +1032,7 @@ func (k *KaitaiInterpreter) parseStringField(ctx context.Context, field Sequence
 		return nil, ctx.Err()
 	default:
 	}
-	
+
 	// Determine encoding
 	encoding := field.Encoding
 	if encoding == "" {
@@ -1045,7 +1057,7 @@ func (k *KaitaiInterpreter) parseStringField(ctx context.Context, field Sequence
 	} else if field.SizeEOS {
 		// Read until end of stream
 		k.logger.DebugContext(ctx, "Reading string until EOS", "field_id", field.ID)
-		
+
 		// Check if we're at EOF first
 		isEof, err := pCtx.IO.EOF()
 		if err != nil {
@@ -1280,6 +1292,112 @@ func convertKaitaiTypeForSerialization(value any) any {
 
 	// Return as-is for non-kaitai types
 	return value
+}
+
+// resolveTypeInHierarchy resolves a type name by searching through nested type scopes
+func (k *KaitaiInterpreter) resolveTypeInHierarchy(typeName string) (*Type, bool) {
+	// Try to resolve in current nested type context first
+	// Walk up the type stack to find the type in nested scopes
+	for i := len(k.typeStack) - 1; i >= 0; i-- {
+		currentTypeName := k.typeStack[i]
+		if currentType, found := k.schema.Types[currentTypeName]; found {
+			// Check if the type has nested types
+			if currentType.Types != nil {
+				if nestedType, found := currentType.Types[typeName]; found {
+					return nestedType, true
+				}
+			}
+		}
+	}
+
+	// Fall back to global type lookup
+	if globalType, found := k.schema.Types[typeName]; found {
+		return &globalType, true
+	}
+
+	return nil, false
+}
+
+// convertToEnum converts a parsed field result to a KaitaiEnum
+func (k *KaitaiInterpreter) convertToEnum(ctx context.Context, result *ParsedData, enumName string) (*ParsedData, error) {
+	// Get the underlying integer value from the parsed result
+	var intValue int64
+	
+	// Extract integer value from different kaitaicel types
+	if kaitaiType, ok := result.Value.(kaitaicel.KaitaiType); ok {
+		switch kt := kaitaiType.(type) {
+		case *kaitaicel.KaitaiInt:
+			if val, ok := kt.Value().(int64); ok {
+				intValue = val
+			} else {
+				return nil, fmt.Errorf("KaitaiInt value is not int64: %T", kt.Value())
+			}
+		case *kaitaicel.KaitaiBitField:
+			intValue = kt.AsInt()
+		default:
+			// Try to get numeric value through the KaitaiType interface
+			if numericVal, err := kt.ConvertToNative(reflect.TypeOf(int64(0))); err == nil {
+				if val, ok := numericVal.(int64); ok {
+					intValue = val
+				} else {
+					return nil, fmt.Errorf("enum value is not an integer: %T", numericVal)
+				}
+			} else {
+				return nil, fmt.Errorf("cannot convert %T to integer for enum %s: %w", kt, enumName, err)
+			}
+		}
+	} else {
+		// Handle raw integer values
+		switch v := result.Value.(type) {
+		case int:
+			intValue = int64(v)
+		case int64:
+			intValue = v
+		case uint:
+			intValue = int64(v)
+		case uint64:
+			intValue = int64(v)
+		default:
+			return nil, fmt.Errorf("enum field value is not an integer: %T", result.Value)
+		}
+	}
+
+	// Get enum mapping from schema
+	enumMapping, exists := k.schema.Enums[enumName]
+	if !exists {
+		return nil, fmt.Errorf("enum '%s' not found in schema", enumName)
+	}
+
+	// Convert EnumDef to the format expected by kaitaicel
+	mapping := make(map[int64]string)
+	for value, name := range enumMapping {
+		switch v := value.(type) {
+		case int:
+			mapping[int64(v)] = name
+		case int64:
+			mapping[v] = name
+		case float64:
+			mapping[int64(v)] = name
+		default:
+			k.logger.WarnContext(ctx, "Skipping enum value with unsupported type", "enum_name", enumName, "value", value, "type", fmt.Sprintf("%T", value))
+		}
+	}
+
+	// Create KaitaiEnum
+	kaitaiEnum, err := kaitaicel.NewKaitaiEnum(intValue, enumName, mapping)
+	if err != nil {
+		return nil, fmt.Errorf("creating enum '%s' with value %d: %w", enumName, intValue, err)
+	}
+
+	// Create new result with enum value
+	enumResult := &ParsedData{
+		Value:    kaitaiEnum,
+		Type:     "enum:" + enumName,
+		IsArray:  result.IsArray,
+		Children: result.Children,
+	}
+
+	return enumResult, nil
 }
 
 // Helper for checking boolean values
