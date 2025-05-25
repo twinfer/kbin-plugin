@@ -32,3 +32,11 @@ testdata/
 Thumbs.db
 temp.go
 
+# StarUML project file
+*.mdj
+
+# Image export of class diagram
+*.svg
+
+# Documentation directory
+docs/
