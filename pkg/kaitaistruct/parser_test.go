@@ -12,6 +12,7 @@ import (
 	"github.com/kaitai-io/kaitai_struct_go_runtime/kaitai" // Import for types.IsError and types.DefaultTypeAdapter
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/twinfer/kbin-plugin/pkg/kaitaicel"
 )
 
 func newTestInterpreter(t *testing.T, schema *KaitaiSchema) *KaitaiInterpreter {
@@ -45,6 +46,14 @@ func getMapKeys(m map[string]*ParsedData) []string {
 	return keys
 }
 
+// Helper to get the underlying value from either a kaitaicel type or primitive type
+func getUnderlyingValue(value any) any {
+	if kaitaiType, ok := value.(kaitaicel.KaitaiType); ok {
+		return kaitaiType.Value()
+	}
+	return value
+}
+
 func TestParse_SimpleRootType(t *testing.T) {
 	schema := &KaitaiSchema{
 		Meta: Meta{ID: "simple_root", Endian: "le"},
@@ -62,9 +71,10 @@ func TestParse_SimpleRootType(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, parsed)
 
-	assert.Equal(t, uint8(0x42), getParsedValue(t, parsed, "magic"))
-	assert.Equal(t, uint16(5), getParsedValue(t, parsed, "length"))
-	assert.Equal(t, "hello", getParsedValue(t, parsed, "message"))
+	// kaitaicel stores all integers as int64 internally, so we need to check for int64
+	assert.Equal(t, int64(0x42), getUnderlyingValue(getParsedValue(t, parsed, "magic")))
+	assert.Equal(t, int64(5), getUnderlyingValue(getParsedValue(t, parsed, "length")))
+	assert.Equal(t, "hello", getUnderlyingValue(getParsedValue(t, parsed, "message")))
 }
 
 func TestParse_NestedType(t *testing.T) {

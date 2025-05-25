@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"reflect"
 	"strconv"
 	"strings"
 
@@ -17,6 +18,7 @@ import (
 	"github.com/google/cel-go/cel"
 	"github.com/kaitai-io/kaitai_struct_go_runtime/kaitai"
 	internalCel "github.com/twinfer/kbin-plugin/internal/cel"
+	"github.com/twinfer/kbin-plugin/pkg/kaitaicel"
 	"github.com/twinfer/kbin-plugin/testutil"
 )
 
@@ -47,12 +49,40 @@ type ParsedData struct {
 	IsArray  bool
 }
 
-// NewKaitaiInterpreter creates a new interpreter for a given schema
+// NewKaitaiInterpreter creates a new interpreter for a given schema with kaitaicel integration
 func NewKaitaiInterpreter(schema *KaitaiSchema, logger *slog.Logger) (*KaitaiInterpreter, error) {
-	// Create expression pool with our enhanced CEL environment
-	pool, err := internalCel.NewExpressionPool()
+	// Create enhanced CEL environment with Kaitai types
+	enumRegistry := kaitaicel.NewEnumRegistry()
+
+	// Register any enums from the schema
+	if schema.Enums != nil {
+		for enumName, enumDef := range schema.Enums {
+			mapping := make(map[int64]string)
+			for value, name := range enumDef {
+				if intVal, ok := value.(int64); ok {
+					mapping[intVal] = name
+				} else if floatVal, ok := value.(float64); ok {
+					mapping[int64(floatVal)] = name
+				}
+			}
+			enumRegistry.Register(enumName, mapping)
+		}
+	}
+
+	// Create base internal CEL environment with all Kaitai expression functions
+	baseEnv, err := internalCel.NewEnvironment()
 	if err != nil {
-		return nil, fmt.Errorf("failed to create expression pool: %w", err)
+		return nil, fmt.Errorf("failed to create base CEL environment: %w", err)
+	}
+
+	// For now, let's use the base environment without kaitaicel extensions to avoid compatibility issues
+	// The kaitaicel types will still be created and used, but CEL expressions will work with standard types
+	enhancedEnv := baseEnv
+
+	// Create expression pool with enhanced environment
+	pool, err := internalCel.NewExpressionPoolWithEnv(enhancedEnv)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create expression pool with enhanced environment: %w", err)
 	}
 
 	log := logger
@@ -70,26 +100,51 @@ func NewKaitaiInterpreter(schema *KaitaiSchema, logger *slog.Logger) (*KaitaiInt
 	}, nil
 }
 
-// AsActivation creates a CEL activation from the parse context
+// AsActivation creates a CEL activation from the parse context with kaitaicel support
 func (ctx *ParseContext) AsActivation() (cel.Activation, error) {
 	// Create map of variables for CEL
 	vars := make(map[string]any)
 
-	// Add current context values
+	// Add current context values, converting kaitai types for CEL compatibility
 	if ctx.Children != nil {
-		maps.Copy(vars, ctx.Children)
+		for k, v := range ctx.Children {
+			vars[k] = convertForCELActivation(v)
+		}
 	}
 
 	// Add special variables
 	vars["_io"] = ctx.IO
 	if ctx.Root != nil {
-		vars["_root"] = ctx.Root.Children
+		rootVars := make(map[string]any)
+		for k, v := range ctx.Root.Children {
+			rootVars[k] = convertForCELActivation(v)
+		}
+		vars["_root"] = rootVars
 	}
 	if ctx.Parent != nil {
-		vars["_parent"] = ctx.Parent.Children
+		parentVars := make(map[string]any)
+		for k, v := range ctx.Parent.Children {
+			parentVars[k] = convertForCELActivation(v)
+		}
+		vars["_parent"] = parentVars
 	}
 
 	return cel.NewActivation(vars)
+}
+
+// convertForCELActivation converts values to be compatible with CEL activation
+func convertForCELActivation(value any) any {
+	if value == nil {
+		return nil
+	}
+
+	// Handle kaitaicel types - convert to standard CEL-compatible types
+	if kaitaiType, ok := value.(kaitaicel.KaitaiType); ok {
+		return kaitaiType.Value() // Return the underlying value for CEL compatibility
+	}
+
+	// Return primitive types as-is for CEL compatibility
+	return value
 }
 
 // Parse parses binary data according to the schema
@@ -224,7 +279,6 @@ func (k *KaitaiInterpreter) parseType(ctx context.Context, typeName string, stre
 
 	// Look for the type in the schema
 	var typeObj Type
-	var found bool
 
 	if typeName == k.schema.Meta.ID {
 		// This is the root type being parsed directly (not as a field of another type)
@@ -249,13 +303,15 @@ func (k *KaitaiInterpreter) parseType(ctx context.Context, typeName string, stre
 				return nil, fmt.Errorf("parsing field '%s' in root type '%s': %w", seq.ID, typeName, err)
 			}
 			if field != nil { // Only add if not nil
-				result.Children[seq.ID] = field        // Store the ParsedData
-				evalCtx.Children[seq.ID] = field.Value // Store the primitive for expressions
+				result.Children[seq.ID] = field // Store the ParsedData
+				// Store the underlying value for expressions (convert kaitaicel types)
+				evalCtx.Children[seq.ID] = convertForCELActivation(field.Value)
 			}
 		}
 
 		return result, nil
-	} else if typeObj, found = k.schema.Types[typeName]; found {
+	} else if typePtr, found := k.resolveTypeInHierarchy(typeName); found {
+		typeObj = *typePtr
 		// Create evaluation context for this specific type
 		typeEvalCtx := &ParseContext{
 			Children: make(map[string]any),
@@ -284,8 +340,9 @@ func (k *KaitaiInterpreter) parseType(ctx context.Context, typeName string, stre
 			}
 
 			if parsedFieldData != nil { // Only add if not nil (e.g., conditional field was skipped)
-				result.Children[seq.ID] = parsedFieldData            // Store the ParsedData
-				typeEvalCtx.Children[seq.ID] = parsedFieldData.Value // Store the primitive for expressions in typeEvalCtx
+				result.Children[seq.ID] = parsedFieldData // Store the ParsedData
+				// Store the underlying value for expressions (convert kaitaicel types)
+				typeEvalCtx.Children[seq.ID] = convertForCELActivation(parsedFieldData.Value)
 			}
 		}
 
@@ -294,12 +351,7 @@ func (k *KaitaiInterpreter) parseType(ctx context.Context, typeName string, stre
 			k.logger.DebugContext(ctx, "Processing instances for type", "type_name", typeName, "instance_count", len(typeObj.Instances))
 
 			instancesToProcess := make(map[string]InstanceDef)
-			for name, inst := range typeObj.Instances {
-				instancesToProcess[name] = inst
-				// Eagerly add instance definition to context so it can be referenced if needed,
-				// though its value will be evaluated. This is more for introspection.
-				// typeEvalCtx.Children[name] = inst // This might be too early or confusing for CEL
-			}
+			maps.Copy(instancesToProcess, typeObj.Instances)
 
 			maxPasses := len(instancesToProcess) + 2 // Allow a couple of extra passes for dependencies
 			processedInLastPass := -1
@@ -323,7 +375,8 @@ func (k *KaitaiInterpreter) parseType(ctx context.Context, typeName string, stre
 						k.logger.DebugContext(ctx, "Instance evaluated successfully", "type_name", typeName, "instance_name", name, "value", val.Value)
 						result.Children[name] = val // Store the ParsedData for the final result
 						if val != nil {
-							typeEvalCtx.Children[name] = val.Value // Add to current eval context
+							// Store the underlying value for expressions (convert kaitaicel types)
+							typeEvalCtx.Children[name] = convertForCELActivation(val.Value)
 						}
 						successfullyProcessedThisPass[name] = true
 						processedInThisPass++
@@ -349,7 +402,7 @@ func (k *KaitaiInterpreter) parseType(ctx context.Context, typeName string, stre
 	return nil, fmt.Errorf("unknown type: %s", typeName)
 }
 
-// parseBuiltinType handles built-in Kaitai types
+// parseBuiltinType handles built-in Kaitai types using kaitaicel
 func (k *KaitaiInterpreter) parseBuiltinType(ctx context.Context, typeName string, stream *kaitai.Stream) (*ParsedData, bool, error) {
 	result := &ParsedData{
 		Type:     typeName,
@@ -360,182 +413,156 @@ func (k *KaitaiInterpreter) parseBuiltinType(ctx context.Context, typeName strin
 		return nil, false, ctx.Err()
 	default:
 	}
-	// Process built-in types
+
+	// Helper function to read bytes and create kaitai types
+	readAndCreateKaitaiType := func(size int, readerFunc func([]byte, int) (kaitaicel.KaitaiType, error)) (*ParsedData, bool, error) {
+		rawData, err := stream.ReadBytes(size)
+		if err != nil {
+			k.logger.ErrorContext(ctx, "Failed to read bytes for type", "type", typeName, "size", size, "error", err)
+			return nil, true, fmt.Errorf("reading %d bytes for %s: %w", size, typeName, err)
+		}
+
+		kaitaiVal, err := readerFunc(rawData, 0)
+		if err != nil {
+			k.logger.ErrorContext(ctx, "Failed to create kaitai type", "type", typeName, "error", err)
+			return nil, true, fmt.Errorf("creating kaitai type %s: %w", typeName, err)
+		}
+
+		result.Value = kaitaiVal
+		k.logger.DebugContext(ctx, "Successfully parsed kaitai type", "type", typeName, "value", kaitaiVal.Value())
+		return result, true, nil
+	}
+
+	// Process built-in types using kaitaicel
 	switch typeName {
 	case "u1":
-		val, err := stream.ReadU1()
-		if err != nil {
-			k.logger.ErrorContext(ctx, "Failed to read u1", "error", err)
-			return nil, true, fmt.Errorf("reading u1: %w", err)
-		}
-		result.Value = uint8(val)
-		return result, true, nil
+		return readAndCreateKaitaiType(1, func(data []byte, offset int) (kaitaicel.KaitaiType, error) {
+			return kaitaicel.ReadU1(data, offset)
+		})
 	case "u2le":
-		val, err := stream.ReadU2le()
-		if err != nil {
-			k.logger.ErrorContext(ctx, "Failed to read u2le", "error", err)
-			return nil, true, fmt.Errorf("reading u2le: %w", err)
-		}
-		result.Value = uint16(val)
-		return result, true, nil
-	case "u4le":
-		val, err := stream.ReadU4le()
-		if err != nil {
-			k.logger.ErrorContext(ctx, "Failed to read u4le", "error", err)
-			return nil, true, fmt.Errorf("reading u4le: %w", err)
-		}
-		result.Value = uint32(val)
-		return result, true, nil
-	case "u8le":
-		val, err := stream.ReadU8le()
-		if err != nil {
-			k.logger.ErrorContext(ctx, "Failed to read u8le", "error", err)
-			return nil, true, fmt.Errorf("reading u8le: %w", err)
-		}
-		result.Value = uint64(val)
-		return result, true, nil
+		return readAndCreateKaitaiType(2, func(data []byte, offset int) (kaitaicel.KaitaiType, error) {
+			return kaitaicel.ReadU2LE(data, offset)
+		})
 	case "u2be":
-		val, err := stream.ReadU2be()
-		if err != nil {
-			k.logger.ErrorContext(ctx, "Failed to read u2be", "error", err)
-			return nil, true, fmt.Errorf("reading u2be: %w", err)
-		}
-		result.Value = uint16(val)
-		return result, true, nil
+		return readAndCreateKaitaiType(2, func(data []byte, offset int) (kaitaicel.KaitaiType, error) {
+			return kaitaicel.ReadU2BE(data, offset)
+		})
+	case "u4le":
+		return readAndCreateKaitaiType(4, func(data []byte, offset int) (kaitaicel.KaitaiType, error) {
+			return kaitaicel.ReadU4LE(data, offset)
+		})
 	case "u4be":
-		val, err := stream.ReadU4be()
-		if err != nil {
-			k.logger.ErrorContext(ctx, "Failed to read u4be", "error", err)
-			return nil, true, fmt.Errorf("reading u4be: %w", err)
-		}
-		result.Value = uint32(val)
-		return result, true, nil
+		return readAndCreateKaitaiType(4, func(data []byte, offset int) (kaitaicel.KaitaiType, error) {
+			return kaitaicel.ReadU4BE(data, offset)
+		})
+	case "u8le":
+		return readAndCreateKaitaiType(8, func(data []byte, offset int) (kaitaicel.KaitaiType, error) {
+			return kaitaicel.ReadU8LE(data, offset)
+		})
 	case "u8be":
-		val, err := stream.ReadU8be()
-		if err != nil {
-			k.logger.ErrorContext(ctx, "Failed to read u8be", "error", err)
-			return nil, true, fmt.Errorf("reading u8be: %w", err)
-		}
-		result.Value = uint64(val)
-		return result, true, nil
-	case "s1":
-		val, err := stream.ReadS1()
-		if err != nil {
-			k.logger.ErrorContext(ctx, "Failed to read s1", "error", err)
-			return nil, true, fmt.Errorf("reading s1: %w", err)
-		}
-		result.Value = int8(val)
-		return result, true, nil
-	case "s2le":
-		val, err := stream.ReadS2le()
-		if err != nil {
-			k.logger.ErrorContext(ctx, "Failed to read s2le", "error", err)
-			return nil, true, fmt.Errorf("reading s2le: %w", err)
-		}
-		result.Value = int16(val)
-		return result, true, nil
-	case "s4le":
-		val, err := stream.ReadS4le()
-		if err != nil {
-			k.logger.ErrorContext(ctx, "Failed to read s4le", "error", err)
-			return nil, true, fmt.Errorf("reading s4le: %w", err)
-		}
-		result.Value = int32(val)
-		return result, true, nil
-	case "s8le":
-		val, err := stream.ReadS8le()
-		if err != nil {
-			k.logger.ErrorContext(ctx, "Failed to read s8le", "error", err)
-			return nil, true, fmt.Errorf("reading s8le: %w", err)
-		}
-		result.Value = int64(val)
-		return result, true, nil
-	case "s2be":
-		val, err := stream.ReadS2be()
-		if err != nil {
-			k.logger.ErrorContext(ctx, "Failed to read s2be", "error", err)
-			return nil, true, fmt.Errorf("reading s2be: %w", err)
-		}
-		result.Value = int16(val)
-		return result, true, nil
-	case "s4be":
-		val, err := stream.ReadS4be()
-		if err != nil {
-			k.logger.ErrorContext(ctx, "Failed to read s4be", "error", err)
-			return nil, true, fmt.Errorf("reading s4be: %w", err)
-		}
-		result.Value = int32(val)
-		return result, true, nil
-	case "s8be":
-		val, err := stream.ReadS8be()
-		if err != nil {
-			k.logger.ErrorContext(ctx, "Failed to read s8be", "error", err)
-			return nil, true, fmt.Errorf("reading s8be: %w", err)
-		}
-		result.Value = int64(val)
-		return result, true, nil
+		return readAndCreateKaitaiType(8, func(data []byte, offset int) (kaitaicel.KaitaiType, error) {
+			return kaitaicel.ReadU8BE(data, offset)
+		})
 	case "f4le":
-		val, err := stream.ReadF4le()
-		if err != nil {
-			k.logger.ErrorContext(ctx, "Failed to read f4le", "error", err)
-			return nil, true, fmt.Errorf("reading f4le: %w", err)
-		}
-		result.Value = float32(val)
-		return result, true, nil
-	case "f8le":
-		val, err := stream.ReadF8le()
-		if err != nil {
-			k.logger.ErrorContext(ctx, "Failed to read f8le", "error", err)
-			return nil, true, fmt.Errorf("reading f8le: %w", err)
-		}
-		result.Value = float64(val)
-		return result, true, nil
+		return readAndCreateKaitaiType(4, func(data []byte, offset int) (kaitaicel.KaitaiType, error) {
+			return kaitaicel.ReadF4LE(data, offset)
+		})
 	case "f4be":
-		val, err := stream.ReadF4be()
-		if err != nil {
-			k.logger.ErrorContext(ctx, "Failed to read f4be", "error", err)
-			return nil, true, fmt.Errorf("reading f4be: %w", err)
-		}
-		result.Value = float32(val)
-		return result, true, nil
+		return readAndCreateKaitaiType(4, func(data []byte, offset int) (kaitaicel.KaitaiType, error) {
+			return kaitaicel.ReadF4BE(data, offset)
+		})
+	case "f8le":
+		return readAndCreateKaitaiType(8, func(data []byte, offset int) (kaitaicel.KaitaiType, error) {
+			return kaitaicel.ReadF8LE(data, offset)
+		})
 	case "f8be":
-		val, err := stream.ReadF8be()
-		if err != nil {
-			k.logger.ErrorContext(ctx, "Failed to read f8be", "error", err)
-			return nil, true, fmt.Errorf("reading f8be: %w", err)
-		}
-		result.Value = float64(val)
-		return result, true, nil
+		return readAndCreateKaitaiType(8, func(data []byte, offset int) (kaitaicel.KaitaiType, error) {
+			return kaitaicel.ReadF8BE(data, offset)
+		})
 	case "str", "strz":
 		// Handled in parseField since we need encoding info
 		return nil, false, nil
+	case "s1":
+		return readAndCreateKaitaiType(1, func(data []byte, offset int) (kaitaicel.KaitaiType, error) {
+			if offset >= len(data) {
+				return nil, fmt.Errorf("EOF: cannot read s1 at offset %d", offset)
+			}
+			val := int8(data[offset])
+			return kaitaicel.NewKaitaiS1(val, data[offset:offset+1]), nil
+		})
+	case "s2le":
+		return readAndCreateKaitaiType(2, func(data []byte, offset int) (kaitaicel.KaitaiType, error) {
+			if offset+2 > len(data) {
+				return nil, fmt.Errorf("EOF: cannot read s2le at offset %d", offset)
+			}
+			val := int16(data[offset]) | int16(data[offset+1])<<8
+			return kaitaicel.NewKaitaiS2(val, data[offset:offset+2]), nil
+		})
+	case "s2be":
+		return readAndCreateKaitaiType(2, func(data []byte, offset int) (kaitaicel.KaitaiType, error) {
+			if offset+2 > len(data) {
+				return nil, fmt.Errorf("EOF: cannot read s2be at offset %d", offset)
+			}
+			val := int16(data[offset])<<8 | int16(data[offset+1])
+			return kaitaicel.NewKaitaiS2(val, data[offset:offset+2]), nil
+		})
+	case "s4le":
+		return readAndCreateKaitaiType(4, func(data []byte, offset int) (kaitaicel.KaitaiType, error) {
+			if offset+4 > len(data) {
+				return nil, fmt.Errorf("EOF: cannot read s4le at offset %d", offset)
+			}
+			val := int32(data[offset]) | int32(data[offset+1])<<8 | int32(data[offset+2])<<16 | int32(data[offset+3])<<24
+			return kaitaicel.NewKaitaiS4(val, data[offset:offset+4]), nil
+		})
+	case "s4be":
+		return readAndCreateKaitaiType(4, func(data []byte, offset int) (kaitaicel.KaitaiType, error) {
+			if offset+4 > len(data) {
+				return nil, fmt.Errorf("EOF: cannot read s4be at offset %d", offset)
+			}
+			val := int32(data[offset])<<24 | int32(data[offset+1])<<16 | int32(data[offset+2])<<8 | int32(data[offset+3])
+			return kaitaicel.NewKaitaiS4(val, data[offset:offset+4]), nil
+		})
+	case "s8le":
+		return readAndCreateKaitaiType(8, func(data []byte, offset int) (kaitaicel.KaitaiType, error) {
+			if offset+8 > len(data) {
+				return nil, fmt.Errorf("EOF: cannot read s8le at offset %d", offset)
+			}
+			val := int64(data[offset]) | int64(data[offset+1])<<8 | int64(data[offset+2])<<16 | int64(data[offset+3])<<24 |
+				int64(data[offset+4])<<32 | int64(data[offset+5])<<40 | int64(data[offset+6])<<48 | int64(data[offset+7])<<56
+			return kaitaicel.NewKaitaiS8(val, data[offset:offset+8]), nil
+		})
+	case "s8be":
+		return readAndCreateKaitaiType(8, func(data []byte, offset int) (kaitaicel.KaitaiType, error) {
+			if offset+8 > len(data) {
+				return nil, fmt.Errorf("EOF: cannot read s8be at offset %d", offset)
+			}
+			val := int64(data[offset])<<56 | int64(data[offset+1])<<48 | int64(data[offset+2])<<40 | int64(data[offset+3])<<32 |
+				int64(data[offset+4])<<24 | int64(data[offset+5])<<16 | int64(data[offset+6])<<8 | int64(data[offset+7])
+			return kaitaicel.NewKaitaiS8(val, data[offset:offset+8]), nil
+		})
 	}
 
-	// Handle bit-sized integers (e.g., b1, b6le, b12be)
-	// Regex to capture bit size and optional endianness (le/be)
-	// Example: b6 -> bits=6, endian="" (defaults to BE)
-	//          b12le -> bits=12, endian="le"
-	//          b32be -> bits=32, endian="be"
+	// Handle bit-sized integers with kaitaicel BitField support
 	bitTypeRegex := regexp.MustCompile(`^b(\d+)(le|be)?$`)
 	matches := bitTypeRegex.FindStringSubmatch(typeName)
 
 	if len(matches) > 0 {
 		numBitsStr := matches[1]
 		endianSuffix := ""
-		if len(matches) > 2 { // Check if optional (le/be) group was matched
+		if len(matches) > 2 {
 			endianSuffix = matches[2]
 		}
 
-		numBits, err := strconv.Atoi(numBitsStr) // Or strconv.Atoi if internalCel.ParseInt is not available/suitable
+		numBits, err := strconv.Atoi(numBitsStr)
 		if err != nil {
 			k.logger.ErrorContext(ctx, "Invalid number of bits in bit type", "type_name", typeName, "num_bits_str", numBitsStr, "error", err)
 			return nil, false, fmt.Errorf("invalid number of bits in type '%s': %w", typeName, err)
 		}
 
-		var val uint64 // Read as uint64, KSY 'type' or instances can further refine
+		var val uint64
 		if endianSuffix == "le" {
 			val, err = stream.ReadBitsIntLe(int(numBits))
-		} else { // Default to Big Endian (if "be" or no suffix)
+		} else {
 			val, err = stream.ReadBitsIntBe(int(numBits))
 		}
 
@@ -543,14 +570,17 @@ func (k *KaitaiInterpreter) parseBuiltinType(ctx context.Context, typeName strin
 			k.logger.ErrorContext(ctx, "Failed to read bits", "type_name", typeName, "num_bits", numBits, "endian", endianSuffix, "error", err)
 			return nil, true, fmt.Errorf("reading %d bits for type '%s': %w", numBits, typeName, err)
 		}
-		result.Value = val
-		k.logger.DebugContext(ctx, "Parsed bit-sized integer", "type_name", typeName, "value", val)
-		return result, true, nil
-	}
 
-	if typeName == "str" || typeName == "strz" { // Moved this check after bit types
-		// Handled in parseField since we need encoding info
-		return nil, false, nil
+		// Create bit field using kaitaicel
+		bitField, err := kaitaicel.NewKaitaiBitField(val, numBits)
+		if err != nil {
+			k.logger.ErrorContext(ctx, "Failed to create bit field", "type_name", typeName, "value", val, "bits", numBits, "error", err)
+			return nil, true, fmt.Errorf("creating bit field for type '%s': %w", typeName, err)
+		}
+
+		result.Value = bitField
+		k.logger.DebugContext(ctx, "Parsed bit-sized integer with kaitaicel", "type_name", typeName, "value", val, "bits", numBits)
+		return result, true, nil
 	}
 
 	// Handle type-specific endianness based on schema
@@ -640,7 +670,7 @@ func (k *KaitaiInterpreter) parseField(ctx context.Context, field SequenceItem, 
 
 	// Handle repeat attribute
 	if field.Repeat != "" {
-		return k.parseRepeatedField(ctx, field, pCtx, size)
+		return k.parseRepeatedField(ctx, field, pCtx)
 	}
 
 	// Handle contents attribute
@@ -733,7 +763,25 @@ func (k *KaitaiInterpreter) parseField(ctx context.Context, field SequenceItem, 
 
 	k.logger.DebugContext(ctx, "Recursively parsing field type", "field_id", field.ID, "field_type_to_parse", actualFieldType)
 	// Parse using the appropriate stream
-	return k.parseType(ctx, actualFieldType, subStream)
+	result, err := k.parseType(ctx, actualFieldType, subStream)
+	if err != nil {
+		return nil, err
+	}
+
+	// Convert to enum if field has enum attribute
+	if field.Enum != "" {
+		k.logger.DebugContext(ctx, "Converting field to enum", "field_id", field.ID, "enum_name", field.Enum)
+		if enumResult, enumErr := k.convertToEnum(ctx, result, field.Enum); enumErr != nil {
+			k.logger.WarnContext(ctx, "Failed to convert field to enum", "field_id", field.ID, "enum_name", field.Enum, "error", enumErr)
+			// Return original result if enum conversion fails
+			return result, nil
+		} else {
+			k.logger.DebugContext(ctx, "Successfully converted field to enum", "field_id", field.ID, "enum_name", field.Enum)
+			return enumResult, nil
+		}
+	}
+
+	return result, nil
 }
 
 // processDataWithCEL processes data using CEL expressions
@@ -784,9 +832,7 @@ func (k *KaitaiInterpreter) processDataWithCEL(ctx context.Context, data []byte,
 	// Then add _parent, _root, _io, and finally the 'input' for the process function.
 	evalMap := make(map[string]any)
 	if pCtx.Children != nil {
-		for k, v := range pCtx.Children {
-			evalMap[k] = v
-		}
+		maps.Copy(evalMap, pCtx.Children)
 	}
 	if pCtx.Parent != nil {
 		evalMap["_parent"] = pCtx.Parent.Children // Expose parent's children map
@@ -812,7 +858,7 @@ func (k *KaitaiInterpreter) processDataWithCEL(ctx context.Context, data []byte,
 }
 
 // parseRepeatedField handles repeating fields
-func (k *KaitaiInterpreter) parseRepeatedField(ctx context.Context, field SequenceItem, pCtx *ParseContext, size int) (*ParsedData, error) {
+func (k *KaitaiInterpreter) parseRepeatedField(ctx context.Context, field SequenceItem, pCtx *ParseContext) (*ParsedData, error) {
 	k.logger.DebugContext(ctx, "Parsing repeated field", "field_id", field.ID, "repeat_type", field.Repeat, "repeat_expr", field.RepeatExpr)
 	result := &ParsedData{
 		Type:    field.Type,
@@ -869,7 +915,7 @@ func (k *KaitaiInterpreter) parseRepeatedField(ctx context.Context, field Sequen
 	items := make([]*ParsedData, 0)
 
 	if count > 0 {
-		for i := 0; i < count; i++ {
+		for i := range count {
 			select {
 			case <-ctx.Done():
 				k.logger.InfoContext(ctx, "Parsing repeated field cancelled", "field_id", field.ID, "iteration", i)
@@ -975,9 +1021,9 @@ func (k *KaitaiInterpreter) parseContentsField(ctx context.Context, field Sequen
 	return result, nil
 }
 
-// parseStringField handles string fields
+// parseStringField handles string fields using kaitaicel
 func (k *KaitaiInterpreter) parseStringField(ctx context.Context, field SequenceItem, pCtx *ParseContext, size int) (*ParsedData, error) {
-	k.logger.DebugContext(ctx, "Parsing string field", "field_id", field.ID, "type", field.Type, "size", size, "encoding_field", field.Encoding, "size_eos", field.SizeEOS)
+	k.logger.DebugContext(ctx, "Parsing string field with kaitaicel", "field_id", field.ID, "type", field.Type, "size", size, "encoding_field", field.Encoding, "size_eos", field.SizeEOS)
 	result := &ParsedData{
 		Type: field.Type,
 	}
@@ -986,6 +1032,7 @@ func (k *KaitaiInterpreter) parseStringField(ctx context.Context, field Sequence
 		return nil, ctx.Err()
 	default:
 	}
+
 	// Determine encoding
 	encoding := field.Encoding
 	if encoding == "" {
@@ -1010,26 +1057,23 @@ func (k *KaitaiInterpreter) parseStringField(ctx context.Context, field Sequence
 	} else if field.SizeEOS {
 		// Read until end of stream
 		k.logger.DebugContext(ctx, "Reading string until EOS", "field_id", field.ID)
-		// Use ReadStrEOS directly if the encoding is UTF-8
-		if strings.ToUpper(encoding) == "UTF-8" || strings.ToUpper(encoding) == "UTF8" {
-			str, err := pCtx.IO.ReadStrEOS(encoding) // Corrected: Use pCtx.IO
-			if err != nil {                          // pCtx.IO
-				return nil, fmt.Errorf("reading string until EOS for field '%s': %w", field.ID, err) // ctx.IO -> pCtx.IO
-			}
-			result.Value = str
-			return result, nil
-		}
 
-		// Otherwise, use position and seek
+		// Check if we're at EOF first
 		isEof, err := pCtx.IO.EOF()
 		if err != nil {
 			return nil, fmt.Errorf("checking EOF for field '%s': %w", field.ID, err)
 		}
 		if isEof {
-			result.Value = ""
+			// Create empty kaitai string
+			kaitaiStr, err := kaitaicel.NewKaitaiString([]byte{}, encoding)
+			if err != nil {
+				return nil, fmt.Errorf("creating empty Kaitai string for field '%s': %w", field.ID, err)
+			}
+			result.Value = kaitaiStr
 			return result, nil
 		}
 
+		// Get remaining bytes in stream
 		pos, err := pCtx.IO.Pos()
 		if err != nil {
 			return nil, fmt.Errorf("getting current position for field '%s': %w", field.ID, err)
@@ -1039,8 +1083,8 @@ func (k *KaitaiInterpreter) parseStringField(ctx context.Context, field Sequence
 		if err != nil {
 			return nil, fmt.Errorf("getting stream size for field '%s': %w", field.ID, err)
 		}
-		size := endPos - pos
-		strBytes, err = pCtx.IO.ReadBytes(int(size))
+		remainingSize := endPos - pos
+		strBytes, err = pCtx.IO.ReadBytes(int(remainingSize))
 		if err != nil {
 			return nil, fmt.Errorf("reading string bytes until EOS for field '%s': %w", field.ID, err)
 		}
@@ -1048,32 +1092,25 @@ func (k *KaitaiInterpreter) parseStringField(ctx context.Context, field Sequence
 		return nil, fmt.Errorf("cannot determine string size for field '%s'", field.ID)
 	}
 
-	if err != nil { // This check might be redundant if errors are handled above
+	if err != nil {
 		return nil, fmt.Errorf("reading string bytes for field '%s': %w", field.ID, err)
 	}
 
-	// Process encoding - use CEL's bytesToStr function
-	program, err := k.expressionPool.GetExpression(fmt.Sprintf("bytesToStr(input, %q)", encoding)) // Pass encoding to CEL
+	// Create Kaitai string using kaitaicel with proper encoding support
+	kaitaiStr, err := kaitaicel.NewKaitaiString(strBytes, encoding)
 	if err != nil {
-		return nil, fmt.Errorf("failed to compile bytesToStr expression: %w", err)
+		k.logger.ErrorContext(ctx, "Failed to create Kaitai string", "field_id", field.ID, "encoding", encoding, "error", err)
+		return nil, fmt.Errorf("creating Kaitai string for field '%s' with encoding '%s': %w", field.ID, encoding, err)
 	}
 
-	val, err := k.expressionPool.EvaluateExpression(program, map[string]any{
-		"input": strBytes,
-	})
-	// If CEL evaluation fails, it returns an error. We no longer have a manual fallback here.
-	if err != nil {
-		return nil, fmt.Errorf("decoding string for field '%s' with encoding '%s' via CEL: %w", field.ID, encoding, err)
-	} else {
-		result.Value = val
-	}
-	k.logger.DebugContext(ctx, "Parsed string field", "field_id", field.ID, "value_len", len(result.Value.(string)))
+	result.Value = kaitaiStr
+	k.logger.DebugContext(ctx, "Parsed string field with kaitaicel", "field_id", field.ID, "encoding", encoding, "value_len", kaitaiStr.Length(), "byte_size", kaitaiStr.ByteSize())
 	return result, nil
 }
 
-// parseBytesField handles bytes fields
+// parseBytesField handles bytes fields using kaitaicel
 func (k *KaitaiInterpreter) parseBytesField(ctx context.Context, field SequenceItem, pCtx *ParseContext, size int) (*ParsedData, error) {
-	k.logger.DebugContext(ctx, "Parsing bytes field", "field_id", field.ID, "size", size, "size_eos", field.SizeEOS)
+	k.logger.DebugContext(ctx, "Parsing bytes field with kaitaicel", "field_id", field.ID, "size", size, "size_eos", field.SizeEOS)
 
 	result := &ParsedData{
 		Type: field.Type,
@@ -1102,8 +1139,10 @@ func (k *KaitaiInterpreter) parseBytesField(ctx context.Context, field SequenceI
 		return nil, fmt.Errorf("reading bytes for field '%s': %w", field.ID, err)
 	}
 
-	result.Value = bytesData
-	k.logger.DebugContext(ctx, "Parsed bytes field", "field_id", field.ID, "bytes_len", len(bytesData))
+	// Create Kaitai bytes using kaitaicel
+	kaitaiBytes := kaitaicel.NewKaitaiBytes(bytesData)
+	result.Value = kaitaiBytes
+	k.logger.DebugContext(ctx, "Parsed bytes field with kaitaicel", "field_id", field.ID, "bytes_len", kaitaiBytes.Length())
 	return result, nil
 }
 
@@ -1164,7 +1203,7 @@ func (k *KaitaiInterpreter) evaluateExpression(ctx context.Context, kaitaiExpr s
 	return result.Value(), nil
 }
 
-// parsedDataToMap converts ParsedData to a map suitable for JSON serialization
+// parsedDataToMap converts ParsedData to a map suitable for JSON serialization with kaitaicel support
 func ParsedDataToMap(data *ParsedData) any {
 	if data == nil {
 		return nil
@@ -1178,17 +1217,17 @@ func ParsedDataToMap(data *ParsedData) any {
 				if pd, ok := v.(*ParsedData); ok {
 					result[i] = ParsedDataToMap(pd)
 				} else {
-					result[i] = v
+					result[i] = convertKaitaiTypeForSerialization(v)
 				}
 			}
 			return result
 		}
-		return data.Value
+		return convertKaitaiTypeForSerialization(data.Value)
 	}
 
 	if len(data.Children) == 0 {
-		// Just return the value for primitive types
-		return data.Value
+		// Handle primitive types, including kaitaicel types
+		return convertKaitaiTypeForSerialization(data.Value)
 	}
 
 	// Convert struct type with children
@@ -1196,16 +1235,169 @@ func ParsedDataToMap(data *ParsedData) any {
 
 	// Add value field if it exists and isn't zero/empty
 	if data.Value != nil {
-		result["_value"] = data.Value
+		result["_value"] = convertKaitaiTypeForSerialization(data.Value)
 	}
 
 	// Add all children
 	for name, child := range data.Children {
 		result[testutil.ToPascalCase(name)] = ParsedDataToMap(child) // Convert key to PascalCase
-
 	}
 
 	return result
+}
+
+// convertKaitaiTypeForSerialization converts kaitaicel types to JSON-serializable values
+func convertKaitaiTypeForSerialization(value any) any {
+	if value == nil {
+		return nil
+	}
+
+	// Handle kaitaicel types
+	if kaitaiType, ok := value.(kaitaicel.KaitaiType); ok {
+		switch kt := kaitaiType.(type) {
+		case *kaitaicel.KaitaiInt:
+			// Return the underlying integer value
+			return kt.Value()
+		case *kaitaicel.KaitaiFloat:
+			// Return the underlying float value
+			return kt.Value()
+		case *kaitaicel.KaitaiString:
+			// Return the string value, not the raw bytes
+			return kt.Value()
+		case *kaitaicel.KaitaiBytes:
+			// Return the raw bytes for serialization
+			return kt.Value()
+		case *kaitaicel.BcdType:
+			// Return a structured representation of BCD
+			return map[string]any{
+				"asInt": kt.AsInt(),
+				"asStr": kt.AsStr(),
+				"raw":   kt.RawBytes(),
+			}
+		case *kaitaicel.KaitaiBitField:
+			// Return bit field as integer value
+			return kt.AsInt()
+		case *kaitaicel.KaitaiEnum:
+			// Return enum as a structured value
+			return map[string]any{
+				"value": kt.IntValue(),
+				"name":  kt.Name(),
+				"valid": kt.IsValid(),
+			}
+		default:
+			// For any other kaitai type, return the underlying value
+			return kaitaiType.Value()
+		}
+	}
+
+	// Return as-is for non-kaitai types
+	return value
+}
+
+// resolveTypeInHierarchy resolves a type name by searching through nested type scopes
+func (k *KaitaiInterpreter) resolveTypeInHierarchy(typeName string) (*Type, bool) {
+	// Try to resolve in current nested type context first
+	// Walk up the type stack to find the type in nested scopes
+	for i := len(k.typeStack) - 1; i >= 0; i-- {
+		currentTypeName := k.typeStack[i]
+		if currentType, found := k.schema.Types[currentTypeName]; found {
+			// Check if the type has nested types
+			if currentType.Types != nil {
+				if nestedType, found := currentType.Types[typeName]; found {
+					return nestedType, true
+				}
+			}
+		}
+	}
+
+	// Fall back to global type lookup
+	if globalType, found := k.schema.Types[typeName]; found {
+		return &globalType, true
+	}
+
+	return nil, false
+}
+
+// convertToEnum converts a parsed field result to a KaitaiEnum
+func (k *KaitaiInterpreter) convertToEnum(ctx context.Context, result *ParsedData, enumName string) (*ParsedData, error) {
+	// Get the underlying integer value from the parsed result
+	var intValue int64
+	
+	// Extract integer value from different kaitaicel types
+	if kaitaiType, ok := result.Value.(kaitaicel.KaitaiType); ok {
+		switch kt := kaitaiType.(type) {
+		case *kaitaicel.KaitaiInt:
+			if val, ok := kt.Value().(int64); ok {
+				intValue = val
+			} else {
+				return nil, fmt.Errorf("KaitaiInt value is not int64: %T", kt.Value())
+			}
+		case *kaitaicel.KaitaiBitField:
+			intValue = kt.AsInt()
+		default:
+			// Try to get numeric value through the KaitaiType interface
+			if numericVal, err := kt.ConvertToNative(reflect.TypeOf(int64(0))); err == nil {
+				if val, ok := numericVal.(int64); ok {
+					intValue = val
+				} else {
+					return nil, fmt.Errorf("enum value is not an integer: %T", numericVal)
+				}
+			} else {
+				return nil, fmt.Errorf("cannot convert %T to integer for enum %s: %w", kt, enumName, err)
+			}
+		}
+	} else {
+		// Handle raw integer values
+		switch v := result.Value.(type) {
+		case int:
+			intValue = int64(v)
+		case int64:
+			intValue = v
+		case uint:
+			intValue = int64(v)
+		case uint64:
+			intValue = int64(v)
+		default:
+			return nil, fmt.Errorf("enum field value is not an integer: %T", result.Value)
+		}
+	}
+
+	// Get enum mapping from schema
+	enumMapping, exists := k.schema.Enums[enumName]
+	if !exists {
+		return nil, fmt.Errorf("enum '%s' not found in schema", enumName)
+	}
+
+	// Convert EnumDef to the format expected by kaitaicel
+	mapping := make(map[int64]string)
+	for value, name := range enumMapping {
+		switch v := value.(type) {
+		case int:
+			mapping[int64(v)] = name
+		case int64:
+			mapping[v] = name
+		case float64:
+			mapping[int64(v)] = name
+		default:
+			k.logger.WarnContext(ctx, "Skipping enum value with unsupported type", "enum_name", enumName, "value", value, "type", fmt.Sprintf("%T", value))
+		}
+	}
+
+	// Create KaitaiEnum
+	kaitaiEnum, err := kaitaicel.NewKaitaiEnum(intValue, enumName, mapping)
+	if err != nil {
+		return nil, fmt.Errorf("creating enum '%s' with value %d: %w", enumName, intValue, err)
+	}
+
+	// Create new result with enum value
+	enumResult := &ParsedData{
+		Value:    kaitaiEnum,
+		Type:     "enum:" + enumName,
+		IsArray:  result.IsArray,
+		Children: result.Children,
+	}
+
+	return enumResult, nil
 }
 
 // Helper for checking boolean values

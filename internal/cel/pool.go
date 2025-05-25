@@ -34,6 +34,18 @@ func NewExpressionPool() (*ExpressionPool, error) {
 	}, nil
 }
 
+// NewExpressionPoolWithEnv creates a new expression pool with a custom CEL environment
+func NewExpressionPoolWithEnv(env *cel.Env) (*ExpressionPool, error) {
+	if env == nil {
+		return nil, fmt.Errorf("CEL environment cannot be nil")
+	}
+
+	return &ExpressionPool{
+		env:         env,
+		expressions: make(map[string]cel.Program),
+	}, nil
+}
+
 // GetExpression retrieves or compiles an expression
 func (e *ExpressionPool) GetExpression(exprStr string) (cel.Program, error) {
 	e.mu.RLock()
@@ -187,7 +199,7 @@ func extractVariables(expr string) []string {
 		"startsWith": true, "endsWith": true, "contains": true,
 		"substring": true, "reverse": true,
 		"at": true, "slice": true, "sliceEnd": true, "sliceRange": true,
-		"size": true, "length": true, "count": true, // These are also function names
+		"size": true, "count": true, // These are also function names
 		"abs": true, "min": true, "max": true, "ceil": true, "floor": true, "round": true, // Math functions
 		"processXOR": true, "processZlib": true, "processRotateLeft": true, "processRotateRight": true, // Process functions
 		"encodeString": true, "decodeString": true, // Encoding functions

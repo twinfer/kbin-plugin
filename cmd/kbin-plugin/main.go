@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"log/slog"
 	"os"
 	"sync"
 
@@ -147,8 +148,9 @@ func (k *KaitaiProcessor) parseBinary(ctx context.Context, msg *service.Message)
 	stream := kaitai.NewStream(bytes.NewReader(binData))
 
 	// Create interpreter and parse data
-	interpreter, _ := kst.NewKaitaiInterpreter(schema)
-	parsedData, err := interpreter.Parse(stream)
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	interpreter, _ := kst.NewKaitaiInterpreter(schema, logger)
+	parsedData, err := interpreter.Parse(msg.Context(), stream)
 	if err != nil {
 		k.logger.Errorf("Failed to parse binary data of size %d bytes: %v", len(binData), err)
 		k.mErrors.Incr(1)
@@ -184,6 +186,12 @@ func (k *KaitaiProcessor) serializeToBinary(ctx context.Context, msg *service.Me
 	if err != nil {
 		k.logger.Errorf("Failed to get structured data from message: %v", err)
 		k.mErrors.Incr(1)
+		// Attempt to convert to map[string]any if it's not already
+		if dataMap, ok := structData.(map[string]any); ok {
+			structData = dataMap
+		} else {
+			// If it's not a map and conversion failed, return error
+		}
 		msg.SetError(fmt.Errorf("failed to get structured data from message: %w", err))
 		return service.MessageBatch{msg}, nil
 	}
@@ -198,8 +206,15 @@ func (k *KaitaiProcessor) serializeToBinary(ctx context.Context, msg *service.Me
 	}
 
 	// Create serializer and serialize data
-	serializer, _ := kst.NewKaitaiSerializer(schema)
-	binData, err := serializer.Serialize(structData)
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	serializer, _ := kst.NewKaitaiSerializer(schema, logger)
+
+	// Ensure structData is map[string]any for serialization
+	dataMap, ok := structData.(map[string]any)
+	if !ok {
+		return service.MessageBatch{msg}, fmt.Errorf("structured data is not a map[string]any, got %T", structData)
+	}
+	binData, err := serializer.Serialize(msg.Context(), dataMap)
 	if err != nil {
 		k.logger.Errorf("Failed to serialize data: %v", err)
 		k.mErrors.Incr(1)

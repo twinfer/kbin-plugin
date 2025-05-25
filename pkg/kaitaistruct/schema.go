@@ -34,6 +34,7 @@ type Meta struct {
 type SequenceItem struct {
 	ID          string `yaml:"id"`
 	Type        string `yaml:"type"`
+	Enum        string `yaml:"enum,omitempty"`
 	Repeat      string `yaml:"repeat,omitempty"`
 	RepeatExpr  string `yaml:"repeat-expr,omitempty"`
 	RepeatUntil string `yaml:"repeat-until,omitempty"`
@@ -55,6 +56,7 @@ type SequenceItem struct {
 // Type defines a custom type in the KSY schema
 type Type struct {
 	Seq       []SequenceItem         `yaml:"seq"`
+	Types     map[string]*Type       `yaml:"types"`
 	Instances map[string]InstanceDef `yaml:"instances"`
 	Params    []ParameterDef         `yaml:"params"`
 	Doc       string                 `yaml:"doc"`

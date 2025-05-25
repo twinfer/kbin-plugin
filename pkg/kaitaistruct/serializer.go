@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"regexp"
 	"strings"
 
 	"maps"
@@ -12,6 +13,7 @@ import (
 	"github.com/google/cel-go/cel"
 	"github.com/kaitai-io/kaitai_struct_go_runtime/kaitai"
 	internalCel "github.com/twinfer/kbin-plugin/internal/cel"
+	"github.com/twinfer/kbin-plugin/pkg/kaitaicel"
 )
 
 // KaitaiSerializer provides functionality to serialize objects according to Kaitai schema
@@ -19,6 +21,7 @@ type KaitaiSerializer struct {
 	schema          *KaitaiSchema
 	expressionPool  *internalCel.ExpressionPool
 	processRegistry *ProcessRegistry
+	typeStack       []string  // Stack of type names being processed for hierarchical resolution
 	logger          *slog.Logger
 }
 
@@ -120,15 +123,7 @@ func (k *KaitaiSerializer) serializeType(goCtx context.Context, typeName string,
 		return k.serializeAdHocSwitchType(goCtx, typeName, data, sCtx)
 	}
 
-	// Check if it's a built-in type
-	if handled, err := k.serializeBuiltinType(goCtx, typeName, data, sCtx.Writer); handled {
-		if err != nil {
-			k.logger.ErrorContext(goCtx, "Error serializing built-in type", "type_name", typeName, "error", err)
-		}
-		return err
-	}
-
-	// Look for the type in schema
+	// Look for the type in schema first (root type or custom types)
 	if typeName == k.schema.Meta.ID {
 		// Serialize root level fields
 		dataMap, ok := data.(map[string]any)
@@ -137,16 +132,25 @@ func (k *KaitaiSerializer) serializeType(goCtx context.Context, typeName string,
 		}
 		// Use helper to serialize sequence
 		return k.serializeSequence(goCtx, typeName, k.schema.Seq, dataMap, sCtx)
-
-		return nil
 	}
 
-	// Try to find the type in the schema types
-	typeObj, found := k.schema.Types[typeName]
+	// Check if it's a built-in type (only for primitive type names)
+	if k.isBuiltinTypeName(typeName) {
+		if handled, err := k.serializeBuiltinType(goCtx, typeName, data, sCtx.Writer); handled {
+			if err != nil {
+				k.logger.ErrorContext(goCtx, "Error serializing built-in type", "type_name", typeName, "error", err)
+			}
+			return err
+		}
+	}
+
+	// Try to find the type in the schema types using hierarchical resolution
+	typePtr, found := k.resolveTypeInHierarchy(typeName)
 	if !found {
 		k.logger.ErrorContext(goCtx, "Unknown type for serialization", "type_name", typeName)
 		return fmt.Errorf("unknown type: %s", typeName)
 	}
+	typeObj := *typePtr
 
 	// Serialize type object
 	dataMap, ok := data.(map[string]any)
@@ -162,6 +166,13 @@ func (k *KaitaiSerializer) serializeType(goCtx context.Context, typeName string,
 		Parent:   sCtx,
 		Root:     sCtx.Root,
 	}
+
+	// Push type to stack for hierarchical resolution
+	k.typeStack = append(k.typeStack, typeName)
+	defer func() {
+		// Pop type from stack when done
+		k.typeStack = k.typeStack[:len(k.typeStack)-1]
+	}()
 
 	// Pre-evaluate instances for this type and add them to the fieldCtx.Children
 	// This makes them available for expressions in seq items (if, size, repeat-expr, etc.)
@@ -275,157 +286,67 @@ func (k *KaitaiSerializer) serializeSequence(goCtx context.Context, typeName str
 	return nil
 }
 
-// serializeBuiltinType handles serialization of built-in types
+// serializeBuiltinType handles serialization of built-in types using kaitaicel
 func (k *KaitaiSerializer) serializeBuiltinType(goCtx context.Context, typeName string, data any, writer *kaitai.Writer) (bool, error) {
-	k.logger.DebugContext(goCtx, "Serializing built-in type", "type_name", typeName)
-	// Handle standard types
-	switch typeName {
-	case "u1":
-		val, err := toUint8(data)
-		if err != nil {
-			return true, err
-		}
-		return true, writer.WriteU1(val)
+	k.logger.DebugContext(goCtx, "Serializing built-in type with kaitaicel", "type_name", typeName)
 
-	case "u2le":
-		val, err := toUint16(data)
-		if err != nil {
-			return true, err
-		}
-		return true, writer.WriteU2le(val)
-
-	case "u4le":
-		val, err := toUint32(data)
-		if err != nil {
-			return true, err
-		}
-		return true, writer.WriteU4le(val)
-
-	case "u8le":
-		val, err := toUint64(data)
-		if err != nil {
-			return true, err
-		}
-		return true, writer.WriteU8le(val)
-
-	case "u2be":
-		val, err := toUint16(data)
-		if err != nil {
-			return true, err
-		}
-		return true, writer.WriteU2be(val)
-
-	case "u4be":
-		val, err := toUint32(data)
-		if err != nil {
-			return true, err
-		}
-		return true, writer.WriteU4be(val)
-
-	case "u8be":
-		val, err := toUint64(data)
-		if err != nil {
-			return true, err
-		}
-		return true, writer.WriteU8be(val)
-
-	case "s1":
-		val, err := toInt8(data)
-		if err != nil {
-			return true, err
-		}
-		return true, writer.WriteS1(val)
-
-	case "s2le":
-		val, err := toInt16(data)
-		if err != nil {
-			return true, err
-		}
-		return true, writer.WriteS2le(val)
-
-	case "s4le":
-		val, err := toInt32(data)
-		if err != nil {
-			return true, err
-		}
-		return true, writer.WriteS4le(val)
-
-	case "s8le":
-		val, err := toInt64(data)
-		if err != nil {
-			return true, err
-		}
-		return true, writer.WriteS8le(val)
-
-	case "s2be":
-		val, err := toInt16(data)
-		if err != nil {
-			return true, err
-		}
-		return true, writer.WriteS2be(val)
-
-	case "s4be":
-		val, err := toInt32(data)
-		if err != nil {
-			return true, err
-		}
-		return true, writer.WriteS4be(val)
-
-	case "s8be":
-		val, err := toInt64(data)
-		if err != nil {
-			return true, err
-		}
-		return true, writer.WriteS8be(val)
-
-	case "f4le":
-		val, err := toFloat32(data)
-		if err != nil {
-			return true, err
-		}
-		return true, writer.WriteF4le(val)
-
-	case "f8le":
-		val, err := toFloat64(data)
-		if err != nil {
-			return true, err
-		}
-		return true, writer.WriteF8le(val)
-
-	case "f4be":
-		val, err := toFloat32(data)
-		if err != nil {
-			return true, err
-		}
-		return true, writer.WriteF4be(val)
-
-	case "f8be":
-		val, err := toFloat64(data)
-		if err != nil {
-			return true, err
-		}
-		return true, writer.WriteF8be(val)
-
-	case "str", "strz":
-		// Handled in serializeField
-		return false, nil
-	}
-
-	// Handle type-specific endianness
-	if strings.HasPrefix(typeName, "u") || strings.HasPrefix(typeName, "s") ||
-		strings.HasPrefix(typeName, "f") {
+	// Handle type-specific endianness if not specified (but only for multi-byte types)
+	actualTypeName := typeName
+	if (strings.HasPrefix(typeName, "u") || strings.HasPrefix(typeName, "s") || strings.HasPrefix(typeName, "f")) &&
+		typeName != "u1" && typeName != "s1" { // 1-byte types don't have endianness
 		if !strings.HasSuffix(typeName, "le") && !strings.HasSuffix(typeName, "be") {
 			endian := k.schema.Meta.Endian
 			if endian == "" {
 				endian = "be" // Default big-endian if not specified
 			}
-			newType := typeName + endian
-			k.logger.DebugContext(goCtx, "Applying endianness to built-in type", "original_type", typeName, "new_type_with_endian", newType)
-			return k.serializeBuiltinType(goCtx, newType, data, writer)
+			actualTypeName = typeName + endian
+			k.logger.DebugContext(goCtx, "Applying endianness to built-in type", "original_type", typeName, "new_type_with_endian", actualTypeName)
 		}
 	}
-	k.logger.DebugContext(goCtx, "Type not a recognized built-in for direct serialization", "type_name", typeName)
-	return false, nil
+
+	// Use kaitaicel centralized factory to create the type
+	kaitaiType, err := kaitaicel.NewKaitaiTypeFromValue(data, actualTypeName)
+	if err != nil {
+		// Type not handled by kaitaicel, return false to let other handlers try
+		if actualTypeName == "str" || actualTypeName == "strz" || actualTypeName == "bytes" {
+			return false, nil
+		}
+		return true, fmt.Errorf("failed to create kaitai type for '%s': %w", actualTypeName, err)
+	}
+
+	// Get binary data from kaitai type using Serialize
+	binaryData := kaitaiType.Serialize()
+
+	// Write to the writer
+	if err := writer.WriteBytes(binaryData); err != nil {
+		return true, fmt.Errorf("failed to write bytes for type '%s': %w", actualTypeName, err)
+	}
+
+	k.logger.DebugContext(goCtx, "Successfully serialized built-in type with kaitaicel", "type_name", actualTypeName, "bytes_written", len(binaryData))
+	return true, nil
+}
+
+// isBuiltinTypeName checks if a type name represents a builtin primitive type
+func (k *KaitaiSerializer) isBuiltinTypeName(typeName string) bool {
+	// Remove endian suffix to check base type
+	baseType := typeName
+	if strings.HasSuffix(typeName, "le") || strings.HasSuffix(typeName, "be") {
+		baseType = typeName[:len(typeName)-2]
+	}
+	
+	switch baseType {
+	case "u1", "u2", "u4", "u8", "s1", "s2", "s4", "s8", "f4", "f8":
+		return true
+	case "str", "strz", "bytes":
+		return true
+	default:
+		// Check for bit field types (b1, b2, b3, etc.)
+		bitTypeRegex := regexp.MustCompile(`^b(\d+)$`)
+		if bitTypeRegex.MatchString(baseType) {
+			return true
+		}
+		return false
+	}
 }
 
 // serializeField serializes a single field
@@ -1014,6 +935,30 @@ func (k *KaitaiSerializer) resolveSwitchTypeForSerialization(goCtx context.Conte
 	}
 }
 
+// resolveTypeInHierarchy resolves a type name by searching through nested type scopes
+func (k *KaitaiSerializer) resolveTypeInHierarchy(typeName string) (*Type, bool) {
+	// Try to resolve in current nested type context first
+	// Walk up the type stack to find the type in nested scopes
+	for i := len(k.typeStack) - 1; i >= 0; i-- {
+		currentTypeName := k.typeStack[i]
+		if currentType, found := k.schema.Types[currentTypeName]; found {
+			// Check if the type has nested types
+			if currentType.Types != nil {
+				if nestedType, found := currentType.Types[typeName]; found {
+					return nestedType, true
+				}
+			}
+		}
+	}
+	
+	// Fall back to global type lookup
+	if globalType, found := k.schema.Types[typeName]; found {
+		return &globalType, true
+	}
+	
+	return nil, false
+}
+
 // Type conversion helpers
 func toUint8(data any) (byte, error) {
 	switch v := data.(type) {
@@ -1030,138 +975,6 @@ func toUint8(data any) (byte, error) {
 	}
 }
 
-func toUint16(data any) (uint16, error) {
-	switch v := data.(type) {
-	case uint16:
-		return v, nil
-	case int:
-		return uint16(v), nil
-	case int64:
-		return uint16(v), nil
-	case float64:
-		return uint16(v), nil
-	default:
-		return 0, fmt.Errorf("cannot convert %T to uint16", data)
-	}
-}
-
-func toUint32(data any) (uint32, error) {
-	switch v := data.(type) {
-	case uint32:
-		return v, nil
-	case int:
-		return uint32(v), nil
-	case int64:
-		return uint32(v), nil
-	case float64:
-		return uint32(v), nil
-	default:
-		return 0, fmt.Errorf("cannot convert %T to uint32", data)
-	}
-}
-
-func toUint64(data any) (uint64, error) {
-	switch v := data.(type) {
-	case uint64:
-		return v, nil
-	case int:
-		return uint64(v), nil
-	case int64:
-		return uint64(v), nil
-	case float64:
-		return uint64(v), nil
-	default:
-		return 0, fmt.Errorf("cannot convert %T to uint64", data)
-	}
-}
-
-func toInt8(data any) (int8, error) {
-	switch v := data.(type) {
-	case int8:
-		return v, nil
-	case int:
-		return int8(v), nil
-	case int64:
-		return int8(v), nil
-	case float64:
-		return int8(v), nil
-	default:
-		return 0, fmt.Errorf("cannot convert %T to int8", data)
-	}
-}
-
-func toInt16(data any) (int16, error) {
-	switch v := data.(type) {
-	case int16:
-		return v, nil
-	case int:
-		return int16(v), nil
-	case int64:
-		return int16(v), nil
-	case float64:
-		return int16(v), nil
-	default:
-		return 0, fmt.Errorf("cannot convert %T to int16", data)
-	}
-}
-
-func toInt32(data any) (int32, error) {
-	switch v := data.(type) {
-	case int32:
-		return v, nil
-	case int:
-		return int32(v), nil
-	case int64:
-		return int32(v), nil
-	case float64:
-		return int32(v), nil
-	default:
-		return 0, fmt.Errorf("cannot convert %T to int32", data)
-	}
-}
-
-func toInt64(data any) (int64, error) {
-	switch v := data.(type) {
-	case int64:
-		return v, nil
-	case int:
-		return int64(v), nil
-	case float64:
-		return int64(v), nil
-	default:
-		return 0, fmt.Errorf("cannot convert %T to int64", data)
-	}
-}
-
-func toFloat32(data any) (float32, error) {
-	switch v := data.(type) {
-	case float32:
-		return v, nil
-	case float64:
-		return float32(v), nil
-	case int:
-		return float32(v), nil
-	case int64:
-		return float32(v), nil
-	default:
-		return 0, fmt.Errorf("cannot convert %T to float32", data)
-	}
-}
-
-func toFloat64(data any) (float64, error) {
-	switch v := data.(type) {
-	case float64:
-		return v, nil
-	case float32:
-		return float64(v), nil
-	case int:
-		return float64(v), nil
-	case int64:
-		return float64(v), nil
-	default:
-		return 0, fmt.Errorf("cannot convert %T to float64", data)
-	}
-}
 
 // getWriterBuffer accesses the buffer from a kaitai.Writer
 func getWriterBuffer(writer *kaitai.Writer) ([]byte, error) {
