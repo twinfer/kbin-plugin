@@ -36,6 +36,28 @@ func NewKaitaiF8(value float64, raw []byte) *KaitaiFloat {
 	return &KaitaiFloat{value: value, typeName: "f8", raw: raw}
 }
 
+// --- Factory functions for serialization (value-only constructors) ---
+
+// NewF4LEFromValue creates a f4le type from a value for serialization
+func NewF4LEFromValue(value float32) *KaitaiFloat {
+	return &KaitaiFloat{value: float64(value), typeName: "f4le", raw: nil}
+}
+
+// NewF4BEFromValue creates a f4be type from a value for serialization
+func NewF4BEFromValue(value float32) *KaitaiFloat {
+	return &KaitaiFloat{value: float64(value), typeName: "f4be", raw: nil}
+}
+
+// NewF8LEFromValue creates a f8le type from a value for serialization
+func NewF8LEFromValue(value float64) *KaitaiFloat {
+	return &KaitaiFloat{value: value, typeName: "f8le", raw: nil}
+}
+
+// NewF8BEFromValue creates a f8be type from a value for serialization
+func NewF8BEFromValue(value float64) *KaitaiFloat {
+	return &KaitaiFloat{value: value, typeName: "f8be", raw: nil}
+}
+
 // KaitaiFloat interface implementation
 func (k *KaitaiFloat) ConvertToNative(typeDesc reflect.Type) (interface{}, error) {
 	switch typeDesc.Kind() {
@@ -93,6 +115,48 @@ func (k *KaitaiFloat) KaitaiTypeName() string {
 
 func (k *KaitaiFloat) RawBytes() []byte {
 	return k.raw
+}
+
+// Serialize returns the binary representation of this float according to its type and endianness
+func (k *KaitaiFloat) Serialize() []byte {
+	if k.raw != nil && len(k.raw) > 0 {
+		return k.raw
+	}
+	
+	// Create binary data based on type name
+	switch k.typeName {
+	case "f4":
+		// Default to big-endian for generic types
+		buf := make([]byte, 4)
+		binary.BigEndian.PutUint32(buf, math.Float32bits(float32(k.value)))
+		return buf
+	case "f4le":
+		buf := make([]byte, 4)
+		binary.LittleEndian.PutUint32(buf, math.Float32bits(float32(k.value)))
+		return buf
+	case "f4be":
+		buf := make([]byte, 4)
+		binary.BigEndian.PutUint32(buf, math.Float32bits(float32(k.value)))
+		return buf
+	case "f8":
+		// Default to big-endian for generic types
+		buf := make([]byte, 8)
+		binary.BigEndian.PutUint64(buf, math.Float64bits(k.value))
+		return buf
+	case "f8le":
+		buf := make([]byte, 8)
+		binary.LittleEndian.PutUint64(buf, math.Float64bits(k.value))
+		return buf
+	case "f8be":
+		buf := make([]byte, 8)
+		binary.BigEndian.PutUint64(buf, math.Float64bits(k.value))
+		return buf
+	default:
+		// Fallback for unknown types
+		buf := make([]byte, 8)
+		binary.BigEndian.PutUint64(buf, math.Float64bits(k.value))
+		return buf
+	}
 }
 
 func (k *KaitaiFloat) Add(other ref.Val) ref.Val {

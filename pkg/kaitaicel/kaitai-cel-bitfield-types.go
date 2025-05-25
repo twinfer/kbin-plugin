@@ -121,6 +121,12 @@ func (b *KaitaiBitField) RawBytes() []byte {
 	return nil
 }
 
+// Serialize returns the binary representation of this bit field
+func (b *KaitaiBitField) Serialize() []byte {
+	// Bit fields don't serialize independently - they're part of larger values
+	return nil
+}
+
 func (b *KaitaiBitField) Compare(other ref.Val) ref.Val {
 	var otherVal uint64
 	switch o := other.(type) {

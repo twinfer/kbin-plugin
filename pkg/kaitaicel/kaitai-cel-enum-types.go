@@ -143,6 +143,12 @@ func (e *KaitaiEnum) RawBytes() []byte {
 	return nil
 }
 
+// Serialize returns the binary representation of this enum
+func (e *KaitaiEnum) Serialize() []byte {
+	// Enums don't serialize directly - they use their underlying value's serialization
+	return nil
+}
+
 func (e *KaitaiEnum) Compare(other ref.Val) ref.Val {
 	var otherVal int64
 	switch o := other.(type) {

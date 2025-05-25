@@ -197,6 +197,11 @@ func (b *BcdType) RawBytes() []byte {
 	return b.raw
 }
 
+// Serialize returns the binary representation of this BCD value
+func (b *BcdType) Serialize() []byte {
+	return b.raw
+}
+
 func (b *BcdType) Compare(other ref.Val) ref.Val {
 	var otherInt int64
 
