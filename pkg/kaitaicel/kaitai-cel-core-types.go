@@ -171,12 +171,78 @@ func NewKaitaiTypeFromValue(value any, typeName string) (KaitaiType, error) {
 		switch v := value.(type) {
 		case uint8:
 			return NewU1FromValue(v), nil
-		case int, int8, int16, int32, int64:
-			return NewU1FromValue(uint8(reflect.ValueOf(v).Int())), nil
-		case uint, uint16, uint32, uint64:
-			return NewU1FromValue(uint8(reflect.ValueOf(v).Uint())), nil
-		case float32, float64:
-			return NewU1FromValue(uint8(reflect.ValueOf(v).Float())), nil
+		case int:
+			val := int64(v)
+			if val < 0 || val > 255 {
+				return nil, fmt.Errorf("value %d out of range for u1", val)
+			}
+			return NewU1FromValue(uint8(val)), nil
+		case int8:
+			val := int64(v)
+			if val < 0 || val > 255 { // Not strictly necessary for int8->uint8 if int8 is positive, but good for consistency
+				return nil, fmt.Errorf("value %d out of range for u1", val)
+			}
+			return NewU1FromValue(uint8(val)), nil
+		case int16:
+			val := int64(v)
+			if val < 0 || val > 255 {
+				return nil, fmt.Errorf("value %d out of range for u1", val)
+			}
+			return NewU1FromValue(uint8(val)), nil
+		case int32:
+			val := int64(v)
+			if val < 0 || val > 255 {
+				return nil, fmt.Errorf("value %d out of range for u1", val)
+			}
+			return NewU1FromValue(uint8(val)), nil
+		case int64:
+			val := v
+			if val < 0 || val > 255 {
+				return nil, fmt.Errorf("value %d out of range for u1", val)
+			}
+			return NewU1FromValue(uint8(val)), nil
+		case uint:
+			val := uint64(v)
+			if val > 255 {
+				return nil, fmt.Errorf("value %d out of range for u1", val)
+			}
+			return NewU1FromValue(uint8(val)), nil
+		case uint16:
+			val := uint64(v)
+			if val > 255 {
+				return nil, fmt.Errorf("value %d out of range for u1", val)
+			}
+			return NewU1FromValue(uint8(val)), nil
+		case uint32:
+			val := uint64(v)
+			if val > 255 {
+				return nil, fmt.Errorf("value %d out of range for u1", val)
+			}
+			return NewU1FromValue(uint8(val)), nil
+		case uint64:
+			val := v
+			if val > 255 {
+				return nil, fmt.Errorf("value %d out of range for u1", val)
+			}
+			return NewU1FromValue(uint8(val)), nil
+		case float32:
+			val := float64(v)
+			if val != float64(int64(val)) { // Check for fractional part
+				return nil, fmt.Errorf("float value %f has fractional part, cannot convert to u1", val)
+			}
+			if val < 0 || val > 255 {
+				return nil, fmt.Errorf("value %f out of range for u1", val)
+			}
+			return NewU1FromValue(uint8(val)), nil
+		case float64:
+			val := v
+			if val != float64(int64(val)) { // Check for fractional part
+				return nil, fmt.Errorf("float value %f has fractional part, cannot convert to u1", val)
+			}
+			if val < 0 || val > 255 {
+				return nil, fmt.Errorf("value %f out of range for u1", val)
+			}
+			return NewU1FromValue(uint8(val)), nil
 		default:
 			return nil, fmt.Errorf("cannot convert %T to u1", value)
 		}
@@ -184,12 +250,74 @@ func NewKaitaiTypeFromValue(value any, typeName string) (KaitaiType, error) {
 		switch v := value.(type) {
 		case uint16:
 			return NewU2LEFromValue(v), nil
-		case int, int8, int16, int32, int64:
-			return NewU2LEFromValue(uint16(reflect.ValueOf(v).Int())), nil
-		case uint, uint8, uint32, uint64:
-			return NewU2LEFromValue(uint16(reflect.ValueOf(v).Uint())), nil
-		case float32, float64:
-			return NewU2LEFromValue(uint16(reflect.ValueOf(v).Float())), nil
+		case int:
+			val := int64(v)
+			if val < 0 || val > 0xFFFF {
+				return nil, fmt.Errorf("value %d out of range for u2le", val)
+			}
+			return NewU2LEFromValue(uint16(val)), nil
+		case int8:
+			val := int64(v) // No overflow possible from int8 to uint16 range if positive
+			if val < 0 {
+				return nil, fmt.Errorf("value %d out of range for u2le (must be non-negative)", val)
+			}
+			return NewU2LEFromValue(uint16(val)), nil
+		case int16:
+			val := int64(v)
+			if val < 0 { // int16 can be negative
+				return nil, fmt.Errorf("value %d out of range for u2le (must be non-negative)", val)
+			}
+			return NewU2LEFromValue(uint16(val)), nil
+		case int32:
+			val := int64(v)
+			if val < 0 || val > 0xFFFF {
+				return nil, fmt.Errorf("value %d out of range for u2le", val)
+			}
+			return NewU2LEFromValue(uint16(val)), nil
+		case int64:
+			val := v
+			if val < 0 || val > 0xFFFF {
+				return nil, fmt.Errorf("value %d out of range for u2le", val)
+			}
+			return NewU2LEFromValue(uint16(val)), nil
+		case uint:
+			val := uint64(v)
+			if val > 0xFFFF {
+				return nil, fmt.Errorf("value %d out of range for u2le", val)
+			}
+			return NewU2LEFromValue(uint16(val)), nil
+		case uint8: // uint8 always fits in uint16
+			return NewU2LEFromValue(uint16(v)), nil
+		case uint32:
+			val := uint64(v)
+			if val > 0xFFFF {
+				return nil, fmt.Errorf("value %d out of range for u2le", val)
+			}
+			return NewU2LEFromValue(uint16(val)), nil
+		case uint64:
+			val := v
+			if val > 0xFFFF {
+				return nil, fmt.Errorf("value %d out of range for u2le", val)
+			}
+			return NewU2LEFromValue(uint16(val)), nil
+		case float32:
+			val := float64(v)
+			if val != float64(int64(val)) {
+				return nil, fmt.Errorf("float value %f has fractional part, cannot convert to u2le", val)
+			}
+			if val < 0 || val > 0xFFFF {
+				return nil, fmt.Errorf("value %f out of range for u2le", val)
+			}
+			return NewU2LEFromValue(uint16(val)), nil
+		case float64:
+			val := v
+			if val != float64(int64(val)) {
+				return nil, fmt.Errorf("float value %f has fractional part, cannot convert to u2le", val)
+			}
+			if val < 0 || val > 0xFFFF {
+				return nil, fmt.Errorf("value %f out of range for u2le", val)
+			}
+			return NewU2LEFromValue(uint16(val)), nil
 		default:
 			return nil, fmt.Errorf("cannot convert %T to u2le", value)
 		}
@@ -197,12 +325,74 @@ func NewKaitaiTypeFromValue(value any, typeName string) (KaitaiType, error) {
 		switch v := value.(type) {
 		case uint16:
 			return NewU2BEFromValue(v), nil
-		case int, int8, int16, int32, int64:
-			return NewU2BEFromValue(uint16(reflect.ValueOf(v).Int())), nil
-		case uint, uint8, uint32, uint64:
-			return NewU2BEFromValue(uint16(reflect.ValueOf(v).Uint())), nil
-		case float32, float64:
-			return NewU2BEFromValue(uint16(reflect.ValueOf(v).Float())), nil
+		case int:
+			val := int64(v)
+			if val < 0 || val > 0xFFFF {
+				return nil, fmt.Errorf("value %d out of range for u2be", val)
+			}
+			return NewU2BEFromValue(uint16(val)), nil
+		case int8:
+			val := int64(v)
+			if val < 0 {
+				return nil, fmt.Errorf("value %d out of range for u2be (must be non-negative)", val)
+			}
+			return NewU2BEFromValue(uint16(val)), nil
+		case int16:
+			val := int64(v)
+			if val < 0 {
+				return nil, fmt.Errorf("value %d out of range for u2be (must be non-negative)", val)
+			}
+			return NewU2BEFromValue(uint16(val)), nil
+		case int32:
+			val := int64(v)
+			if val < 0 || val > 0xFFFF {
+				return nil, fmt.Errorf("value %d out of range for u2be", val)
+			}
+			return NewU2BEFromValue(uint16(val)), nil
+		case int64:
+			val := v
+			if val < 0 || val > 0xFFFF {
+				return nil, fmt.Errorf("value %d out of range for u2be", val)
+			}
+			return NewU2BEFromValue(uint16(val)), nil
+		case uint:
+			val := uint64(v)
+			if val > 0xFFFF {
+				return nil, fmt.Errorf("value %d out of range for u2be", val)
+			}
+			return NewU2BEFromValue(uint16(val)), nil
+		case uint8:
+			return NewU2BEFromValue(uint16(v)), nil
+		case uint32:
+			val := uint64(v)
+			if val > 0xFFFF {
+				return nil, fmt.Errorf("value %d out of range for u2be", val)
+			}
+			return NewU2BEFromValue(uint16(val)), nil
+		case uint64:
+			val := v
+			if val > 0xFFFF {
+				return nil, fmt.Errorf("value %d out of range for u2be", val)
+			}
+			return NewU2BEFromValue(uint16(val)), nil
+		case float32:
+			val := float64(v)
+			if val != float64(int64(val)) {
+				return nil, fmt.Errorf("float value %f has fractional part, cannot convert to u2be", val)
+			}
+			if val < 0 || val > 0xFFFF {
+				return nil, fmt.Errorf("value %f out of range for u2be", val)
+			}
+			return NewU2BEFromValue(uint16(val)), nil
+		case float64:
+			val := v
+			if val != float64(int64(val)) {
+				return nil, fmt.Errorf("float value %f has fractional part, cannot convert to u2be", val)
+			}
+			if val < 0 || val > 0xFFFF {
+				return nil, fmt.Errorf("value %f out of range for u2be", val)
+			}
+			return NewU2BEFromValue(uint16(val)), nil
 		default:
 			return nil, fmt.Errorf("cannot convert %T to u2be", value)
 		}
@@ -210,12 +400,68 @@ func NewKaitaiTypeFromValue(value any, typeName string) (KaitaiType, error) {
 		switch v := value.(type) {
 		case uint32:
 			return NewU4LEFromValue(v), nil
-		case int, int8, int16, int32, int64:
-			return NewU4LEFromValue(uint32(reflect.ValueOf(v).Int())), nil
-		case uint, uint8, uint16, uint64:
+		case int:
+			val := int64(v)
+			if val < 0 || val > 0xFFFFFFFF {
+				return nil, fmt.Errorf("value %d out of range for u4le", val)
+			}
+			return NewU4LEFromValue(uint32(val)), nil
+		case int8: // always fits
+			val := int64(v)
+			if val < 0 {
+				return nil, fmt.Errorf("value %d out of range for u4le (must be non-negative)", val)
+			}
+			return NewU4LEFromValue(uint32(val)), nil
+		case int16: // always fits
+			val := int64(v)
+			if val < 0 {
+				return nil, fmt.Errorf("value %d out of range for u4le (must be non-negative)", val)
+			}
+			return NewU4LEFromValue(uint32(val)), nil
+		case int32:
+			val := int64(v)
+			if val < 0 {
+				return nil, fmt.Errorf("value %d out of range for u4le (must be non-negative)", val)
+			}
+			return NewU4LEFromValue(uint32(val)), nil
+		case int64:
+			val := v
+			if val < 0 || val > 0xFFFFFFFF {
+				return nil, fmt.Errorf("value %d out of range for u4le", val)
+			}
+			return NewU4LEFromValue(uint32(val)), nil
+		case uint:
+			val := uint64(v)
+			if val > 0xFFFFFFFF {
+				return nil, fmt.Errorf("value %d out of range for u4le", val)
+			}
+			return NewU4LEFromValue(uint32(val)), nil
+		case uint8, uint16: // always fits
 			return NewU4LEFromValue(uint32(reflect.ValueOf(v).Uint())), nil
-		case float32, float64:
-			return NewU4LEFromValue(uint32(reflect.ValueOf(v).Float())), nil
+		case uint64:
+			val := v
+			if val > 0xFFFFFFFF {
+				return nil, fmt.Errorf("value %d out of range for u4le", val)
+			}
+			return NewU4LEFromValue(uint32(val)), nil
+		case float32:
+			val := float64(v)
+			if val != float64(int64(val)) {
+				return nil, fmt.Errorf("float value %f has fractional part, cannot convert to u4le", val)
+			}
+			if val < 0 || val > 0xFFFFFFFF {
+				return nil, fmt.Errorf("value %f out of range for u4le", val)
+			}
+			return NewU4LEFromValue(uint32(val)), nil
+		case float64:
+			val := v
+			if val != float64(int64(val)) {
+				return nil, fmt.Errorf("float value %f has fractional part, cannot convert to u4le", val)
+			}
+			if val < 0 || val > 0xFFFFFFFF {
+				return nil, fmt.Errorf("value %f out of range for u4le", val)
+			}
+			return NewU4LEFromValue(uint32(val)), nil
 		default:
 			return nil, fmt.Errorf("cannot convert %T to u4le", value)
 		}
@@ -223,12 +469,68 @@ func NewKaitaiTypeFromValue(value any, typeName string) (KaitaiType, error) {
 		switch v := value.(type) {
 		case uint32:
 			return NewU4BEFromValue(v), nil
-		case int, int8, int16, int32, int64:
-			return NewU4BEFromValue(uint32(reflect.ValueOf(v).Int())), nil
-		case uint, uint8, uint16, uint64:
+		case int:
+			val := int64(v)
+			if val < 0 || val > 0xFFFFFFFF {
+				return nil, fmt.Errorf("value %d out of range for u4be", val)
+			}
+			return NewU4BEFromValue(uint32(val)), nil
+		case int8:
+			val := int64(v)
+			if val < 0 {
+				return nil, fmt.Errorf("value %d out of range for u4be (must be non-negative)", val)
+			}
+			return NewU4BEFromValue(uint32(val)), nil
+		case int16:
+			val := int64(v)
+			if val < 0 {
+				return nil, fmt.Errorf("value %d out of range for u4be (must be non-negative)", val)
+			}
+			return NewU4BEFromValue(uint32(val)), nil
+		case int32:
+			val := int64(v)
+			if val < 0 {
+				return nil, fmt.Errorf("value %d out of range for u4be (must be non-negative)", val)
+			}
+			return NewU4BEFromValue(uint32(val)), nil
+		case int64:
+			val := v
+			if val < 0 || val > 0xFFFFFFFF {
+				return nil, fmt.Errorf("value %d out of range for u4be", val)
+			}
+			return NewU4BEFromValue(uint32(val)), nil
+		case uint:
+			val := uint64(v)
+			if val > 0xFFFFFFFF {
+				return nil, fmt.Errorf("value %d out of range for u4be", val)
+			}
+			return NewU4BEFromValue(uint32(val)), nil
+		case uint8, uint16:
 			return NewU4BEFromValue(uint32(reflect.ValueOf(v).Uint())), nil
-		case float32, float64:
-			return NewU4BEFromValue(uint32(reflect.ValueOf(v).Float())), nil
+		case uint64:
+			val := v
+			if val > 0xFFFFFFFF {
+				return nil, fmt.Errorf("value %d out of range for u4be", val)
+			}
+			return NewU4BEFromValue(uint32(val)), nil
+		case float32:
+			val := float64(v)
+			if val != float64(int64(val)) {
+				return nil, fmt.Errorf("float value %f has fractional part, cannot convert to u4be", val)
+			}
+			if val < 0 || val > 0xFFFFFFFF {
+				return nil, fmt.Errorf("value %f out of range for u4be", val)
+			}
+			return NewU4BEFromValue(uint32(val)), nil
+		case float64:
+			val := v
+			if val != float64(int64(val)) {
+				return nil, fmt.Errorf("float value %f has fractional part, cannot convert to u4be", val)
+			}
+			if val < 0 || val > 0xFFFFFFFF {
+				return nil, fmt.Errorf("value %f out of range for u4be", val)
+			}
+			return NewU4BEFromValue(uint32(val)), nil
 		default:
 			return nil, fmt.Errorf("cannot convert %T to u4be", value)
 		}
@@ -236,12 +538,44 @@ func NewKaitaiTypeFromValue(value any, typeName string) (KaitaiType, error) {
 		switch v := value.(type) {
 		case uint64:
 			return NewU8LEFromValue(v), nil
-		case int, int8, int16, int32, int64:
-			return NewU8LEFromValue(uint64(reflect.ValueOf(v).Int())), nil
-		case uint, uint8, uint16, uint32:
-			return NewU8LEFromValue(uint64(reflect.ValueOf(v).Uint())), nil
-		case float32, float64:
-			return NewU8LEFromValue(uint64(reflect.ValueOf(v).Float())), nil
+		case int: // int might be 32-bit or 64-bit
+			val := int64(v)
+			if val < 0 {
+				return nil, fmt.Errorf("value %d out of range for u8le (must be non-negative)", val)
+			}
+			return NewU8LEFromValue(uint64(val)), nil
+		case int8, int16, int32: // always fits if positive
+			val := reflect.ValueOf(v).Int()
+			if val < 0 {
+				return nil, fmt.Errorf("value %d out of range for u8le (must be non-negative)", val)
+			}
+			return NewU8LEFromValue(uint64(val)), nil
+		case int64:
+			val := v
+			if val < 0 {
+				return nil, fmt.Errorf("value %d out of range for u8le (must be non-negative)", val)
+			}
+			return NewU8LEFromValue(uint64(val)), nil
+		case uint, uint8, uint16, uint32: // always fits
+			return NewU8LEFromValue(reflect.ValueOf(v).Uint()), nil
+		case float32:
+			val := float64(v)
+			if val != float64(int64(val)) {
+				return nil, fmt.Errorf("float value %f has fractional part, cannot convert to u8le", val)
+			}
+			if val < 0 || val > float64(0xFFFFFFFFFFFFFFFF) { // Check against MaxUint64 as float
+				return nil, fmt.Errorf("value %f out of range for u8le", val)
+			}
+			return NewU8LEFromValue(uint64(val)), nil
+		case float64:
+			val := v
+			if val != float64(int64(val)) {
+				return nil, fmt.Errorf("float value %f has fractional part, cannot convert to u8le", val)
+			}
+			if val < 0 || val > float64(0xFFFFFFFFFFFFFFFF) { // Check against MaxUint64 as float
+				return nil, fmt.Errorf("value %f out of range for u8le", val)
+			}
+			return NewU8LEFromValue(uint64(val)), nil
 		default:
 			return nil, fmt.Errorf("cannot convert %T to u8le", value)
 		}
@@ -249,12 +583,44 @@ func NewKaitaiTypeFromValue(value any, typeName string) (KaitaiType, error) {
 		switch v := value.(type) {
 		case uint64:
 			return NewU8BEFromValue(v), nil
-		case int, int8, int16, int32, int64:
-			return NewU8BEFromValue(uint64(reflect.ValueOf(v).Int())), nil
+		case int:
+			val := int64(v)
+			if val < 0 {
+				return nil, fmt.Errorf("value %d out of range for u8be (must be non-negative)", val)
+			}
+			return NewU8BEFromValue(uint64(val)), nil
+		case int8, int16, int32:
+			val := reflect.ValueOf(v).Int()
+			if val < 0 {
+				return nil, fmt.Errorf("value %d out of range for u8be (must be non-negative)", val)
+			}
+			return NewU8BEFromValue(uint64(val)), nil
+		case int64:
+			val := v
+			if val < 0 {
+				return nil, fmt.Errorf("value %d out of range for u8be (must be non-negative)", val)
+			}
+			return NewU8BEFromValue(uint64(val)), nil
 		case uint, uint8, uint16, uint32:
-			return NewU8BEFromValue(uint64(reflect.ValueOf(v).Uint())), nil
-		case float32, float64:
-			return NewU8BEFromValue(uint64(reflect.ValueOf(v).Float())), nil
+			return NewU8BEFromValue(reflect.ValueOf(v).Uint()), nil
+		case float32:
+			val := float64(v)
+			if val != float64(int64(val)) {
+				return nil, fmt.Errorf("float value %f has fractional part, cannot convert to u8be", val)
+			}
+			if val < 0 || val > float64(0xFFFFFFFFFFFFFFFF) {
+				return nil, fmt.Errorf("value %f out of range for u8be", val)
+			}
+			return NewU8BEFromValue(uint64(val)), nil
+		case float64:
+			val := v
+			if val != float64(int64(val)) {
+				return nil, fmt.Errorf("float value %f has fractional part, cannot convert to u8be", val)
+			}
+			if val < 0 || val > float64(0xFFFFFFFFFFFFFFFF) {
+				return nil, fmt.Errorf("value %f out of range for u8be", val)
+			}
+			return NewU8BEFromValue(uint64(val)), nil
 		default:
 			return nil, fmt.Errorf("cannot convert %T to u8be", value)
 		}
@@ -263,12 +629,66 @@ func NewKaitaiTypeFromValue(value any, typeName string) (KaitaiType, error) {
 		switch v := value.(type) {
 		case int8:
 			return NewS1FromValue(v), nil
-		case int, int16, int32, int64:
-			return NewS1FromValue(int8(reflect.ValueOf(v).Int())), nil
-		case uint, uint8, uint16, uint32, uint64:
-			return NewS1FromValue(int8(reflect.ValueOf(v).Uint())), nil
-		case float32, float64:
-			return NewS1FromValue(int8(reflect.ValueOf(v).Float())), nil
+		case int:
+			val := int64(v)
+			if val < -128 || val > 127 {
+				return nil, fmt.Errorf("value %d out of range for s1", val)
+			}
+			return NewS1FromValue(int8(val)), nil
+		case int16:
+			val := int64(v)
+			if val < -128 || val > 127 {
+				return nil, fmt.Errorf("value %d out of range for s1", val)
+			}
+			return NewS1FromValue(int8(val)), nil
+		case int32:
+			val := int64(v)
+			if val < -128 || val > 127 {
+				return nil, fmt.Errorf("value %d out of range for s1", val)
+			}
+			return NewS1FromValue(int8(val)), nil
+		case int64:
+			val := v
+			if val < -128 || val > 127 {
+				return nil, fmt.Errorf("value %d out of range for s1", val)
+			}
+			return NewS1FromValue(int8(val)), nil
+		case uint: // uint can be large
+			val := uint64(v)
+			if val > 127 { // Max positive s1
+				return nil, fmt.Errorf("value %d out of range for s1", val)
+			}
+			return NewS1FromValue(int8(val)), nil
+		case uint8: // uint8 can be up to 255
+			val := uint64(v)
+			if val > 127 {
+				return nil, fmt.Errorf("value %d out of range for s1", val)
+			}
+			return NewS1FromValue(int8(val)), nil
+		case uint16, uint32, uint64: // these are definitely too large if > 127
+			val := reflect.ValueOf(v).Uint()
+			if val > 127 {
+				return nil, fmt.Errorf("value %d out of range for s1", val)
+			}
+			return NewS1FromValue(int8(val)), nil
+		case float32:
+			val := float64(v)
+			if val != float64(int64(val)) {
+				return nil, fmt.Errorf("float value %f has fractional part, cannot convert to s1", val)
+			}
+			if val < -128 || val > 127 {
+				return nil, fmt.Errorf("value %f out of range for s1", val)
+			}
+			return NewS1FromValue(int8(val)), nil
+		case float64:
+			val := v
+			if val != float64(int64(val)) {
+				return nil, fmt.Errorf("float value %f has fractional part, cannot convert to s1", val)
+			}
+			if val < -128 || val > 127 {
+				return nil, fmt.Errorf("value %f out of range for s1", val)
+			}
+			return NewS1FromValue(int8(val)), nil
 		default:
 			return nil, fmt.Errorf("cannot convert %T to s1", value)
 		}
@@ -276,12 +696,64 @@ func NewKaitaiTypeFromValue(value any, typeName string) (KaitaiType, error) {
 		switch v := value.(type) {
 		case int16:
 			return NewS2LEFromValue(v), nil
-		case int, int8, int32, int64:
-			return NewS2LEFromValue(int16(reflect.ValueOf(v).Int())), nil
-		case uint, uint8, uint16, uint32, uint64:
-			return NewS2LEFromValue(int16(reflect.ValueOf(v).Uint())), nil
-		case float32, float64:
-			return NewS2LEFromValue(int16(reflect.ValueOf(v).Float())), nil
+		case int:
+			val := int64(v)
+			if val < -32768 || val > 32767 {
+				return nil, fmt.Errorf("value %d out of range for s2le", val)
+			}
+			return NewS2LEFromValue(int16(val)), nil
+		case int8: // always fits
+			return NewS2LEFromValue(int16(v)), nil
+		case int32:
+			val := int64(v)
+			if val < -32768 || val > 32767 {
+				return nil, fmt.Errorf("value %d out of range for s2le", val)
+			}
+			return NewS2LEFromValue(int16(val)), nil
+		case int64:
+			val := v
+			if val < -32768 || val > 32767 {
+				return nil, fmt.Errorf("value %d out of range for s2le", val)
+			}
+			return NewS2LEFromValue(int16(val)), nil
+		case uint:
+			val := uint64(v)
+			if val > 32767 {
+				return nil, fmt.Errorf("value %d out of range for s2le", val)
+			}
+			return NewS2LEFromValue(int16(val)), nil
+		case uint8: // always fits
+			return NewS2LEFromValue(int16(v)), nil
+		case uint16: // uint16 can be up to 65535
+			val := uint64(v)
+			if val > 32767 {
+				return nil, fmt.Errorf("value %d out of range for s2le", val)
+			}
+			return NewS2LEFromValue(int16(val)), nil
+		case uint32, uint64:
+			val := reflect.ValueOf(v).Uint()
+			if val > 32767 {
+				return nil, fmt.Errorf("value %d out of range for s2le", val)
+			}
+			return NewS2LEFromValue(int16(val)), nil
+		case float32:
+			val := float64(v)
+			if val != float64(int64(val)) {
+				return nil, fmt.Errorf("float value %f has fractional part, cannot convert to s2le", val)
+			}
+			if val < -32768 || val > 32767 {
+				return nil, fmt.Errorf("value %f out of range for s2le", val)
+			}
+			return NewS2LEFromValue(int16(val)), nil
+		case float64:
+			val := v
+			if val != float64(int64(val)) {
+				return nil, fmt.Errorf("float value %f has fractional part, cannot convert to s2le", val)
+			}
+			if val < -32768 || val > 32767 {
+				return nil, fmt.Errorf("value %f out of range for s2le", val)
+			}
+			return NewS2LEFromValue(int16(val)), nil
 		default:
 			return nil, fmt.Errorf("cannot convert %T to s2le", value)
 		}
@@ -289,12 +761,64 @@ func NewKaitaiTypeFromValue(value any, typeName string) (KaitaiType, error) {
 		switch v := value.(type) {
 		case int16:
 			return NewS2BEFromValue(v), nil
-		case int, int8, int32, int64:
-			return NewS2BEFromValue(int16(reflect.ValueOf(v).Int())), nil
-		case uint, uint8, uint16, uint32, uint64:
-			return NewS2BEFromValue(int16(reflect.ValueOf(v).Uint())), nil
-		case float32, float64:
-			return NewS2BEFromValue(int16(reflect.ValueOf(v).Float())), nil
+		case int:
+			val := int64(v)
+			if val < -32768 || val > 32767 {
+				return nil, fmt.Errorf("value %d out of range for s2be", val)
+			}
+			return NewS2BEFromValue(int16(val)), nil
+		case int8:
+			return NewS2BEFromValue(int16(v)), nil
+		case int32:
+			val := int64(v)
+			if val < -32768 || val > 32767 {
+				return nil, fmt.Errorf("value %d out of range for s2be", val)
+			}
+			return NewS2BEFromValue(int16(val)), nil
+		case int64:
+			val := v
+			if val < -32768 || val > 32767 {
+				return nil, fmt.Errorf("value %d out of range for s2be", val)
+			}
+			return NewS2BEFromValue(int16(val)), nil
+		case uint:
+			val := uint64(v)
+			if val > 32767 {
+				return nil, fmt.Errorf("value %d out of range for s2be", val)
+			}
+			return NewS2BEFromValue(int16(val)), nil
+		case uint8:
+			return NewS2BEFromValue(int16(v)), nil
+		case uint16:
+			val := uint64(v)
+			if val > 32767 {
+				return nil, fmt.Errorf("value %d out of range for s2be", val)
+			}
+			return NewS2BEFromValue(int16(val)), nil
+		case uint32, uint64:
+			val := reflect.ValueOf(v).Uint()
+			if val > 32767 {
+				return nil, fmt.Errorf("value %d out of range for s2be", val)
+			}
+			return NewS2BEFromValue(int16(val)), nil
+		case float32:
+			val := float64(v)
+			if val != float64(int64(val)) {
+				return nil, fmt.Errorf("float value %f has fractional part, cannot convert to s2be", val)
+			}
+			if val < -32768 || val > 32767 {
+				return nil, fmt.Errorf("value %f out of range for s2be", val)
+			}
+			return NewS2BEFromValue(int16(val)), nil
+		case float64:
+			val := v
+			if val != float64(int64(val)) {
+				return nil, fmt.Errorf("float value %f has fractional part, cannot convert to s2be", val)
+			}
+			if val < -32768 || val > 32767 {
+				return nil, fmt.Errorf("value %f out of range for s2be", val)
+			}
+			return NewS2BEFromValue(int16(val)), nil
 		default:
 			return nil, fmt.Errorf("cannot convert %T to s2be", value)
 		}
@@ -302,12 +826,58 @@ func NewKaitaiTypeFromValue(value any, typeName string) (KaitaiType, error) {
 		switch v := value.(type) {
 		case int32:
 			return NewS4LEFromValue(v), nil
-		case int, int8, int16, int64:
+		case int: // int might be 32-bit or 64-bit
+			val := int64(v)
+			if val < -2147483648 || val > 2147483647 {
+				return nil, fmt.Errorf("value %d out of range for s4le", val)
+			}
+			return NewS4LEFromValue(int32(val)), nil
+		case int8, int16: // always fits
 			return NewS4LEFromValue(int32(reflect.ValueOf(v).Int())), nil
-		case uint, uint8, uint16, uint32, uint64:
+		case int64:
+			val := v
+			if val < -2147483648 || val > 2147483647 {
+				return nil, fmt.Errorf("value %d out of range for s4le", val)
+			}
+			return NewS4LEFromValue(int32(val)), nil
+		case uint: // uint might be 32-bit or 64-bit
+			val := uint64(v)
+			if val > 2147483647 { // Max positive s4
+				return nil, fmt.Errorf("value %d out of range for s4le", val)
+			}
+			return NewS4LEFromValue(int32(val)), nil
+		case uint8, uint16: // always fits
 			return NewS4LEFromValue(int32(reflect.ValueOf(v).Uint())), nil
-		case float32, float64:
-			return NewS4LEFromValue(int32(reflect.ValueOf(v).Float())), nil
+		case uint32: // uint32 can be up to 4294967295
+			val := uint64(v)
+			if val > 2147483647 {
+				return nil, fmt.Errorf("value %d out of range for s4le", val)
+			}
+			return NewS4LEFromValue(int32(val)), nil
+		case uint64:
+			val := v
+			if val > 2147483647 {
+				return nil, fmt.Errorf("value %d out of range for s4le", val)
+			}
+			return NewS4LEFromValue(int32(val)), nil
+		case float32:
+			val := float64(v)
+			if val != float64(int64(val)) {
+				return nil, fmt.Errorf("float value %f has fractional part, cannot convert to s4le", val)
+			}
+			if val < -2147483648 || val > 2147483647 {
+				return nil, fmt.Errorf("value %f out of range for s4le", val)
+			}
+			return NewS4LEFromValue(int32(val)), nil
+		case float64:
+			val := v
+			if val != float64(int64(val)) {
+				return nil, fmt.Errorf("float value %f has fractional part, cannot convert to s4le", val)
+			}
+			if val < -2147483648 || val > 2147483647 {
+				return nil, fmt.Errorf("value %f out of range for s4le", val)
+			}
+			return NewS4LEFromValue(int32(val)), nil
 		default:
 			return nil, fmt.Errorf("cannot convert %T to s4le", value)
 		}
@@ -315,12 +885,58 @@ func NewKaitaiTypeFromValue(value any, typeName string) (KaitaiType, error) {
 		switch v := value.(type) {
 		case int32:
 			return NewS4BEFromValue(v), nil
-		case int, int8, int16, int64:
+		case int:
+			val := int64(v)
+			if val < -2147483648 || val > 2147483647 {
+				return nil, fmt.Errorf("value %d out of range for s4be", val)
+			}
+			return NewS4BEFromValue(int32(val)), nil
+		case int8, int16:
 			return NewS4BEFromValue(int32(reflect.ValueOf(v).Int())), nil
-		case uint, uint8, uint16, uint32, uint64:
+		case int64:
+			val := v
+			if val < -2147483648 || val > 2147483647 {
+				return nil, fmt.Errorf("value %d out of range for s4be", val)
+			}
+			return NewS4BEFromValue(int32(val)), nil
+		case uint:
+			val := uint64(v)
+			if val > 2147483647 {
+				return nil, fmt.Errorf("value %d out of range for s4be", val)
+			}
+			return NewS4BEFromValue(int32(val)), nil
+		case uint8, uint16:
 			return NewS4BEFromValue(int32(reflect.ValueOf(v).Uint())), nil
-		case float32, float64:
-			return NewS4BEFromValue(int32(reflect.ValueOf(v).Float())), nil
+		case uint32:
+			val := uint64(v)
+			if val > 2147483647 {
+				return nil, fmt.Errorf("value %d out of range for s4be", val)
+			}
+			return NewS4BEFromValue(int32(val)), nil
+		case uint64:
+			val := v
+			if val > 2147483647 {
+				return nil, fmt.Errorf("value %d out of range for s4be", val)
+			}
+			return NewS4BEFromValue(int32(val)), nil
+		case float32:
+			val := float64(v)
+			if val != float64(int64(val)) {
+				return nil, fmt.Errorf("float value %f has fractional part, cannot convert to s4be", val)
+			}
+			if val < -2147483648 || val > 2147483647 {
+				return nil, fmt.Errorf("value %f out of range for s4be", val)
+			}
+			return NewS4BEFromValue(int32(val)), nil
+		case float64:
+			val := v
+			if val != float64(int64(val)) {
+				return nil, fmt.Errorf("float value %f has fractional part, cannot convert to s4be", val)
+			}
+			if val < -2147483648 || val > 2147483647 {
+				return nil, fmt.Errorf("value %f out of range for s4be", val)
+			}
+			return NewS4BEFromValue(int32(val)), nil
 		default:
 			return nil, fmt.Errorf("cannot convert %T to s4be", value)
 		}
@@ -328,12 +944,41 @@ func NewKaitaiTypeFromValue(value any, typeName string) (KaitaiType, error) {
 		switch v := value.(type) {
 		case int64:
 			return NewS8LEFromValue(v), nil
-		case int, int8, int16, int32:
-			return NewS8LEFromValue(int64(reflect.ValueOf(v).Int())), nil
-		case uint, uint8, uint16, uint32, uint64:
+		case int, int8, int16, int32: // always fits
+			return NewS8LEFromValue(reflect.ValueOf(v).Int()), nil
+		case uint: // uint might be 64-bit
+			val := uint64(v)
+			if val > 9223372036854775807 { // MaxInt64
+				return nil, fmt.Errorf("value %d out of range for s8le", val)
+			}
+			return NewS8LEFromValue(int64(val)), nil
+		case uint8, uint16, uint32: // always fits
 			return NewS8LEFromValue(int64(reflect.ValueOf(v).Uint())), nil
-		case float32, float64:
-			return NewS8LEFromValue(int64(reflect.ValueOf(v).Float())), nil
+		case uint64:
+			val := v
+			if val > 9223372036854775807 { // MaxInt64
+				return nil, fmt.Errorf("value %d out of range for s8le", val)
+			}
+			return NewS8LEFromValue(int64(val)), nil
+		case float32:
+			val := float64(v)
+			if val != float64(int64(val)) {
+				return nil, fmt.Errorf("float value %f has fractional part, cannot convert to s8le", val)
+			}
+			// Check against int64 min/max represented as float64
+			if val < -9223372036854775808.0 || val > 9223372036854775807.0 {
+				return nil, fmt.Errorf("value %f out of range for s8le", val)
+			}
+			return NewS8LEFromValue(int64(val)), nil
+		case float64:
+			val := v
+			if val != float64(int64(val)) {
+				return nil, fmt.Errorf("float value %f has fractional part, cannot convert to s8le", val)
+			}
+			if val < -9223372036854775808.0 || val > 9223372036854775807.0 {
+				return nil, fmt.Errorf("value %f out of range for s8le", val)
+			}
+			return NewS8LEFromValue(int64(val)), nil
 		default:
 			return nil, fmt.Errorf("cannot convert %T to s8le", value)
 		}
@@ -342,11 +987,39 @@ func NewKaitaiTypeFromValue(value any, typeName string) (KaitaiType, error) {
 		case int64:
 			return NewS8BEFromValue(v), nil
 		case int, int8, int16, int32:
-			return NewS8BEFromValue(int64(reflect.ValueOf(v).Int())), nil
-		case uint, uint8, uint16, uint32, uint64:
+			return NewS8BEFromValue(reflect.ValueOf(v).Int()), nil
+		case uint:
+			val := uint64(v)
+			if val > 9223372036854775807 {
+				return nil, fmt.Errorf("value %d out of range for s8be", val)
+			}
+			return NewS8BEFromValue(int64(val)), nil
+		case uint8, uint16, uint32:
 			return NewS8BEFromValue(int64(reflect.ValueOf(v).Uint())), nil
-		case float32, float64:
-			return NewS8BEFromValue(int64(reflect.ValueOf(v).Float())), nil
+		case uint64:
+			val := v
+			if val > 9223372036854775807 {
+				return nil, fmt.Errorf("value %d out of range for s8be", val)
+			}
+			return NewS8BEFromValue(int64(val)), nil
+		case float32:
+			val := float64(v)
+			if val != float64(int64(val)) {
+				return nil, fmt.Errorf("float value %f has fractional part, cannot convert to s8be", val)
+			}
+			if val < -9223372036854775808.0 || val > 9223372036854775807.0 {
+				return nil, fmt.Errorf("value %f out of range for s8be", val)
+			}
+			return NewS8BEFromValue(int64(val)), nil
+		case float64:
+			val := v
+			if val != float64(int64(val)) {
+				return nil, fmt.Errorf("float value %f has fractional part, cannot convert to s8be", val)
+			}
+			if val < -9223372036854775808.0 || val > 9223372036854775807.0 {
+				return nil, fmt.Errorf("value %f out of range for s8be", val)
+			}
+			return NewS8BEFromValue(int64(val)), nil
 		default:
 			return nil, fmt.Errorf("cannot convert %T to s8be", value)
 		}
@@ -356,10 +1029,29 @@ func NewKaitaiTypeFromValue(value any, typeName string) (KaitaiType, error) {
 		case float32:
 			return NewF4LEFromValue(v), nil
 		case float64:
+			// Check if float64 value is within float32 range
+			// math.MaxFloat32 is approx 3.4e38
+			if v > 3.40282346638528859811704183484516925e+38 || v < -3.40282346638528859811704183484516925e+38 {
+				// Check also for smallest non-zero to prevent underflow to zero if that's desired,
+				// but direct conversion float64->float32 handles this by flushing to zero or subnormal.
+				// The main concern here is overflow to Inf.
+				if v != 0 && (v < 1.401298464324817e-45 && v > -1.401298464324817e-45) && v != float64(float32(v)) {
+					// Value is in subnormal range of float32 or would become zero, and direct conversion would change it.
+					// This is a very nuanced check. For now, primarily focus on overflow.
+				}
+				// If v is outside the normal range of float32, direct conversion float64(v) might become Inf.
+				// We should check if float32(v) is Inf and v was not already Inf.
+				f32Val := float32(v)
+				if (f32Val == float32(float64(1.0/0.0)) || f32Val == float32(float64(-1.0/0.0))) && !(v == float64(1.0/0.0) || v == float64(-1.0/0.0)) {
+					return nil, fmt.Errorf("value %f out of range for f4le (float32)", v)
+				}
+			}
 			return NewF4LEFromValue(float32(v)), nil
-		case int, int8, int16, int32, int64:
+		case int, int8, int16, int32, int64: // Integer to float32 can lose precision for large integers
+			// Converting int64 to float32 can lose precision if int64 > 2^24
+			// For now, allow this conversion as it's common.
 			return NewF4LEFromValue(float32(reflect.ValueOf(v).Int())), nil
-		case uint, uint8, uint16, uint32, uint64:
+		case uint, uint8, uint16, uint32, uint64: // Similar precision loss concern for uint64
 			return NewF4LEFromValue(float32(reflect.ValueOf(v).Uint())), nil
 		default:
 			return nil, fmt.Errorf("cannot convert %T to f4le", value)
@@ -369,7 +1061,11 @@ func NewKaitaiTypeFromValue(value any, typeName string) (KaitaiType, error) {
 		case float32:
 			return NewF4BEFromValue(v), nil
 		case float64:
-			return NewF4BEFromValue(float32(v)), nil
+			f32Val := float32(v)
+			if (f32Val == float32(float64(1.0/0.0)) || f32Val == float32(float64(-1.0/0.0))) && !(v == float64(1.0/0.0) || v == float64(-1.0/0.0)) {
+				return nil, fmt.Errorf("value %f out of range for f4be (float32)", v)
+			}
+			return NewF4BEFromValue(f32Val), nil
 		case int, int8, int16, int32, int64:
 			return NewF4BEFromValue(float32(reflect.ValueOf(v).Int())), nil
 		case uint, uint8, uint16, uint32, uint64:
@@ -381,11 +1077,12 @@ func NewKaitaiTypeFromValue(value any, typeName string) (KaitaiType, error) {
 		switch v := value.(type) {
 		case float64:
 			return NewF8LEFromValue(v), nil
-		case float32:
+		case float32: // float32 always fits in float64
 			return NewF8LEFromValue(float64(v)), nil
-		case int, int8, int16, int32, int64:
+		case int, int8, int16, int32, int64: // int64 to float64 can lose precision for very large integers (> 2^53)
+			// Allow this conversion for now, as direct float64 representation is the goal.
 			return NewF8LEFromValue(float64(reflect.ValueOf(v).Int())), nil
-		case uint, uint8, uint16, uint32, uint64:
+		case uint, uint8, uint16, uint32, uint64: // uint64 to float64 also precision loss concern
 			return NewF8LEFromValue(float64(reflect.ValueOf(v).Uint())), nil
 		default:
 			return nil, fmt.Errorf("cannot convert %T to f8le", value)

@@ -383,23 +383,22 @@ func (t *ASTTransformer) VisitCall(node *expr.Call) error {
 }
 
 func (t *ASTTransformer) VisitTernaryOp(node *expr.TernaryOp) error {
-	// Map Kaitai ternary operator to CEL ternary function call
-	// Generate native CEL ternary: (condition ? true_value : false_value)
-	t.sb.WriteString("(") // Outer parentheses for the whole ternary operation
+	// Map Kaitai ternary operator to CEL ternary function call: ternary(condition, true_expr, false_expr)
+	t.sb.WriteString("ternary(")
 
 	// Transform condition
 	err := node.Cond.Accept(t)
 	if err != nil {
 		return err
 	}
-	t.sb.WriteString(" ? ")
+	t.sb.WriteString(", ")
 
 	// Transform true expression
 	err = node.IfTrue.Accept(t)
 	if err != nil {
 		return err
 	}
-	t.sb.WriteString(" : ")
+	t.sb.WriteString(", ")
 
 	// Transform false expression
 	err = node.IfFalse.Accept(t)
@@ -407,7 +406,6 @@ func (t *ASTTransformer) VisitTernaryOp(node *expr.TernaryOp) error {
 		return err
 	}
 	t.sb.WriteString(")")
-	t.sb.WriteString(")") // Close outer parentheses
 	return nil
 }
 
@@ -444,6 +442,7 @@ func mapKaitaiTypeToCELConversion(kaitaiTypeName string) (string, bool) {
 		"s1": "to_i", "s2": "to_i", "s4": "to_i", "s8": "to_i",
 		"u1": "to_i", "u2": "to_i", "u4": "to_i", "u8": "to_i",
 		"f4": "to_f", "f8": "to_f",
+		"str": "string", // Added mapping for string cast
 	}
 	celName, found := mapping[strings.ToLower(kaitaiTypeName)] // Case-insensitive matching
 	return celName, found
