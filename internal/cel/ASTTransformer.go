@@ -224,6 +224,26 @@ func (t *ASTTransformer) VisitUnOp(node *expr.UnOp) error {
 }
 
 func (t *ASTTransformer) VisitAttr(node *expr.Attr) error {
+	// Handle common attributes that map to CEL functions
+	switch node.Name {
+	case "size", "length": // Treat .length as an alias for .size
+		t.sb.WriteString("size(")
+		err := node.Value.Accept(t) // receiver
+		if err != nil {
+			return err
+		}
+		t.sb.WriteString(")")
+		return nil
+	case "to_s":
+		t.sb.WriteString("to_s(")   // Call your custom "to_s" CEL function
+		err := node.Value.Accept(t) // The object to be converted to string
+		if err != nil {
+			return err
+		}
+		t.sb.WriteString(")")
+		return nil
+	}
+
 	// Handle _io attributes that are function calls in CEL without arguments,
 	// e.g., Kaitai `_io.pos` -> CEL `pos(_io)`
 	if ioNode, ok := node.Value.(*expr.Io); ok {
@@ -233,9 +253,12 @@ func (t *ASTTransformer) VisitAttr(node *expr.Attr) error {
 		case "pos":
 			celFuncName = "pos" // Maps to pos(_io)
 			isIoAttrFunc = true
-		case "size":
-			celFuncName = "stream_size" // Maps to stream_size(_io)
-			isIoAttrFunc = true
+		// Note: _io.size is handled by the "size" case above, mapping to size(_io) if that's intended.
+		// If _io.size specifically means stream_size, it might need explicit handling here.
+		// For now, assuming general "size" mapping is sufficient for _io.size as well.
+		// case "size":
+		// 	celFuncName = "stream_size" // Maps to stream_size(_io)
+		// 	isIoAttrFunc = true
 		case "eof", "is_eof":
 			celFuncName = "isEOF" // Maps to isEOF(_io)
 			isIoAttrFunc = true
@@ -251,23 +274,13 @@ func (t *ASTTransformer) VisitAttr(node *expr.Attr) error {
 			t.sb.WriteString(")")
 			return nil
 		}
-		// If not one of these specific attributes, it might be an _io attribute
-		// that's part of a Call node (e.g., _io.read_u1).
-		// In that case, VisitCall will handle the transformation.
-		// Here, we just write the receiver.attribute form.
+		// If not one of these specific attributes (like pos, eof), and not size/length/to_s,
+		// it might be an _io attribute that's part of a Call node (e.g., _io.read_u1)
+		// or a direct field access on a hypothetical _io user type (less common).
+		// For direct field access on _io (e.g., _io.some_custom_field if _io were a map/object),
+		// the generic attribute access below would apply.
 	}
 
-	// Handle .to_s conversion specifically by mapping to your custom "to_s" CEL function
-	if node.Name == "to_s" {
-		t.sb.WriteString("to_s(")   // Call your custom "to_s" CEL function
-		err := node.Value.Accept(t) // The object to be converted to string (e.g., digit1)
-		if err != nil {
-			return err
-		}
-		t.sb.WriteString(")")
-		return nil
-	}
-	//new end
 	// Generic attribute access: receiver.name
 	err := node.Value.Accept(t) // receiver
 	if err != nil {
