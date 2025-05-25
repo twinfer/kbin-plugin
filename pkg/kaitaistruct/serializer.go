@@ -21,7 +21,7 @@ type KaitaiSerializer struct {
 	schema          *KaitaiSchema
 	expressionPool  *internalCel.ExpressionPool
 	processRegistry *ProcessRegistry
-	typeStack       []string  // Stack of type names being processed for hierarchical resolution
+	typeStack       []string // Stack of type names being processed for hierarchical resolution
 	logger          *slog.Logger
 }
 
@@ -197,6 +197,8 @@ func (k *KaitaiSerializer) serializeType(goCtx context.Context, typeName string,
 
 	// Use helper to serialize sequence
 	if err := k.serializeSequence(goCtx, typeName, typeObj.Seq, dataMap, fieldCtx); err != nil {
+		k.logger.ErrorContext(goCtx, "Error serializing sequence for type", "type_name", typeName, "error", err)
+
 		return err
 	}
 
@@ -333,7 +335,7 @@ func (k *KaitaiSerializer) isBuiltinTypeName(typeName string) bool {
 	if strings.HasSuffix(typeName, "le") || strings.HasSuffix(typeName, "be") {
 		baseType = typeName[:len(typeName)-2]
 	}
-	
+
 	switch baseType {
 	case "u1", "u2", "u4", "u8", "s1", "s2", "s4", "s8", "f4", "f8":
 		return true
@@ -950,12 +952,12 @@ func (k *KaitaiSerializer) resolveTypeInHierarchy(typeName string) (*Type, bool)
 			}
 		}
 	}
-	
+
 	// Fall back to global type lookup
 	if globalType, found := k.schema.Types[typeName]; found {
 		return &globalType, true
 	}
-	
+
 	return nil, false
 }
 
@@ -974,7 +976,6 @@ func toUint8(data any) (byte, error) {
 		return 0, fmt.Errorf("cannot convert %T to uint8", data)
 	}
 }
-
 
 // getWriterBuffer accesses the buffer from a kaitai.Writer
 func getWriterBuffer(writer *kaitai.Writer) ([]byte, error) {

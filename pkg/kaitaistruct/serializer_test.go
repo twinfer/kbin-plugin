@@ -1024,7 +1024,7 @@ func TestKaitaicelIntegration_PerformanceBaseline(t *testing.T) {
 	}
 
 	// Warmup
-	for range 100 {
+	for range 1000 {
 		_, err := s.Serialize(context.Background(), data)
 		require.NoError(t, err)
 	}

@@ -4,6 +4,7 @@
 *.dll
 *.so
 *.dylib
+.*
 benthos-kaitai
 
 # Test binary, built with `go test -c`
@@ -30,4 +31,4 @@ testdata/
 .DS_Store
 Thumbs.db
 temp.go
-test/kaitaistruct
+
