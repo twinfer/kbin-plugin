@@ -1,13 +1,11 @@
 package kaitaicel
 
 import (
-	"encoding/binary"
 	"math"
 	"reflect"
 	"testing"
 
 	"github.com/google/cel-go/common/types"
-	"github.com/google/cel-go/common/types/ref"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -55,7 +53,7 @@ func TestKaitaiInt_Serialize(t *testing.T) {
 		{"s8be", NewS8BEFromValue(-4), []byte{0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFC}},
 		// Test generic types defaulting to BigEndian
 		{"u2_generic", &KaitaiInt{value: 0x1234, typeName: "u2"}, []byte{0x12, 0x34}},
-		{"s4_generic", &KaitaiInt{value: int64(int32(0x87654321)), typeName: "s4"}, []byte{0x87, 0x65, 0x43, 0x21}},
+		{"s4_generic", &KaitaiInt{value: int64(int32(-2023406815)), typeName: "s4"}, []byte{0x87, 0x65, 0x43, 0x21}},
 	}
 
 	for _, tt := range tests {
@@ -63,7 +61,7 @@ func TestKaitaiInt_Serialize(t *testing.T) {
 			assert.Equal(t, tt.expected, tt.instance.Serialize())
 		})
 	}
-	
+
 	// Test default fallback in Serialize
 	unknownInt := &KaitaiInt{value: 0xAB, typeName: "uUnknown"}
 	assert.Equal(t, []byte{0xAB}, unknownInt.Serialize(), "Serialize fallback for unknown type")
@@ -80,32 +78,32 @@ func TestKaitaiInt_Methods(t *testing.T) {
 }
 
 func TestKaitaiInt_Equal(t *testing.T) {
-	ki1a := NewKaitaiS2LEFromValue(100)
-	ki1b := NewKaitaiS2LEFromValue(100)
-	ki2 := NewKaitaiS2LEFromValue(200)
+	ki1a := NewS2LEFromValue(100)
+	ki1b := NewS2LEFromValue(100)
+	ki2 := NewS2LEFromValue(200)
 	celInt100 := types.Int(100)
 	celInt200 := types.Int(200)
 	celStr := types.String("100")
 
-	assert.True(t, ki1a.Equal(ki1b).(types.Bool))
-	assert.False(t, ki1a.Equal(ki2).(types.Bool))
-	assert.True(t, ki1a.Equal(celInt100).(types.Bool))
-	assert.False(t, ki1a.Equal(celInt200).(types.Bool))
-	assert.False(t, ki1a.Equal(celStr).(types.Bool)) // Compare with different type
-	assert.True(t, ki1a.Equal(types.Uint(100)).(types.Bool)) // Test against Uint
+	assert.True(t, bool(ki1a.Equal(ki1b).(types.Bool)))
+	assert.False(t, bool(ki1a.Equal(ki2).(types.Bool)))
+	assert.True(t, bool(ki1a.Equal(celInt100).(types.Bool)))
+	assert.False(t, bool(ki1a.Equal(celInt200).(types.Bool)))
+	assert.False(t, bool(ki1a.Equal(celStr).(types.Bool)))         // Compare with different type
+	assert.True(t, bool(ki1a.Equal(types.Uint(100)).(types.Bool))) // Test against Uint
 }
 
 func TestKaitaiInt_Compare(t *testing.T) {
-	ki10 := NewKaitaiS4BEFromValue(10)
-	ki20 := NewKaitaiS4BEFromValue(20)
+	ki10 := NewS4BEFromValue(10)
+	ki20 := NewS4BEFromValue(20)
 	celInt10 := types.Int(10)
 	celInt5 := types.Int(5)
 	celInt25 := types.Int(25)
 
-	assert.Equal(t, types.IntZero, ki10.Compare(celInt10))      // 10 == 10
-	assert.Equal(t, types.IntOne, ki10.Compare(celInt5))       // 10 > 5
-	assert.Equal(t, types.IntNegOne, ki10.Compare(celInt25))   // 10 < 25
-	assert.Equal(t, types.IntNegOne, ki10.Compare(ki20))       // 10 < 20
+	assert.Equal(t, types.IntZero, ki10.Compare(celInt10))   // 10 == 10
+	assert.Equal(t, types.IntOne, ki10.Compare(celInt5))     // 10 > 5
+	assert.Equal(t, types.IntNegOne, ki10.Compare(celInt25)) // 10 < 25
+	assert.Equal(t, types.IntNegOne, ki10.Compare(ki20))     // 10 < 20
 
 	// Error case
 	assert.True(t, types.IsError(ki10.Compare(types.String("10"))))
@@ -122,7 +120,7 @@ func TestKaitaiInt_ConvertToNative(t *testing.T) {
 	v, err = kiPos.ConvertToNative(reflect.TypeOf(uint8(0)))
 	require.NoError(t, err)
 	assert.Equal(t, uint8(42), v)
-	
+
 	_, err = kiNeg.ConvertToNative(reflect.TypeOf(uint8(0)))
 	assert.Error(t, err, "Should error converting negative to unsigned")
 
@@ -157,7 +155,6 @@ func TestKaitaiInt_Add(t *testing.T) {
 	assert.True(t, types.IsError(ki1.Add(types.String("5"))))
 }
 
-
 // --- KaitaiString Tests ---
 
 func TestKaitaiString_NewKaitaiString(t *testing.T) {
@@ -191,7 +188,7 @@ func TestKaitaiString_Serialize(t *testing.T) {
 
 	ksASCII := &KaitaiString{value: "ascii", encoding: "ASCII", raw: nil}
 	assert.Equal(t, []byte("ascii"), ksASCII.Serialize())
-	
+
 	ksFallback := &KaitaiString{value: "fallback", encoding: "NON_EXISTENT_FOR_ENCODE_FALLBACK", raw: nil}
 	assert.Equal(t, []byte("fallback"), ksFallback.Serialize(), "Should fallback to UTF-8 bytes if encoding fails")
 }
@@ -203,8 +200,8 @@ func TestKaitaiString_Methods(t *testing.T) {
 	assert.Equal(t, "str", ks.KaitaiTypeName())
 	assert.Equal(t, raw, ks.RawBytes())
 	assert.Equal(t, KaitaiStringType, ks.Type())
-	assert.Equal(t, 6, ks.Length()) // Character length
-	assert.Equal(t, 6, ks.ByteSize()) // Byte length
+	assert.Equal(t, 6, ks.Length())          // Character length
+	assert.Equal(t, 6, ks.ByteSize())        // Byte length
 	assert.Equal(t, types.Int(6), ks.Size()) // CEL Size (runes)
 }
 
@@ -233,7 +230,7 @@ func TestKaitaiBytes_Methods(t *testing.T) {
 	assert.Equal(t, KaitaiBytesType, kb.Type())
 	assert.Equal(t, 3, kb.Length())
 	assert.Equal(t, types.Int(3), kb.Size())
-	
+
 	b, err := kb.At(1)
 	require.NoError(t, err)
 	assert.Equal(t, byte(0xB), b)
@@ -256,7 +253,7 @@ func TestNewKaitaiTypeFromValue_Integers(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, int64(-5), s2leVal.(*KaitaiInt).Value())
 	assert.Equal(t, "s2le", s2leVal.(*KaitaiInt).KaitaiTypeName())
-	
+
 	// From float64
 	u4beVal, err := NewKaitaiTypeFromValue(float64(100.0), "u4be")
 	require.NoError(t, err)
@@ -266,7 +263,7 @@ func TestNewKaitaiTypeFromValue_Integers(t *testing.T) {
 	_, err = NewKaitaiTypeFromValue(float64(300.0), "u1")
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "out of range for u1")
-	
+
 	// Range error from int64
 	_, err = NewKaitaiTypeFromValue(int64(300), "u1")
 	assert.Error(t, err)
@@ -276,7 +273,7 @@ func TestNewKaitaiTypeFromValue_Integers(t *testing.T) {
 	_, err = NewKaitaiTypeFromValue(123.45, "u2be")
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "has fractional part, cannot convert to integer type u2be")
-	
+
 	// Conversion from string (should fail as NewKaitaiTypeFromValue doesn't handle string to int)
 	_, err = NewKaitaiTypeFromValue("123", "u1")
 	assert.Error(t, err)
@@ -292,7 +289,7 @@ func TestNewKaitaiTypeFromValue_Floats(t *testing.T) {
 	f8beVal, err := NewKaitaiTypeFromValue(float64(123.456), "f8be")
 	require.NoError(t, err)
 	assert.Equal(t, float64(123.456), f8beVal.(*KaitaiFloat).Value())
-	
+
 	// Overflow float64 to float32
 	_, err = NewKaitaiTypeFromValue(float64(math.MaxFloat64), "f4le")
 	assert.Error(t, err)

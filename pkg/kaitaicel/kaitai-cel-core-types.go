@@ -3,6 +3,7 @@ package kaitaicel
 import (
 	"encoding/binary"
 	"fmt"
+	"math"
 	"reflect"
 	"unicode/utf8"
 
@@ -1042,7 +1043,7 @@ func NewKaitaiTypeFromValue(value any, typeName string) (KaitaiType, error) {
 				// If v is outside the normal range of float32, direct conversion float64(v) might become Inf.
 				// We should check if float32(v) is Inf and v was not already Inf.
 				f32Val := float32(v)
-				if (f32Val == float32(float64(1.0/0.0)) || f32Val == float32(float64(-1.0/0.0))) && !(v == float64(1.0/0.0) || v == float64(-1.0/0.0)) {
+				if (f32Val == float32(math.Inf(1)) || f32Val == float32(math.Inf(-1))) && !(v == math.Inf(1) || v == math.Inf(-1)) {
 					return nil, fmt.Errorf("value %f out of range for f4le (float32)", v)
 				}
 			}
@@ -1062,7 +1063,7 @@ func NewKaitaiTypeFromValue(value any, typeName string) (KaitaiType, error) {
 			return NewF4BEFromValue(v), nil
 		case float64:
 			f32Val := float32(v)
-			if (f32Val == float32(float64(1.0/0.0)) || f32Val == float32(float64(-1.0/0.0))) && !(v == float64(1.0/0.0) || v == float64(-1.0/0.0)) {
+			if (f32Val == float32(math.Inf(1)) || f32Val == float32(math.Inf(-1))) && !(v == math.Inf(1) || v == math.Inf(-1)) {
 				return nil, fmt.Errorf("value %f out of range for f4be (float32)", v)
 			}
 			return NewF4BEFromValue(f32Val), nil

@@ -5,7 +5,6 @@ import (
 	"testing"
 
 	"github.com/google/cel-go/common/types"
-	"github.com/google/cel-go/common/types/ref"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -37,6 +36,7 @@ func getTestEnumMapping() map[int64]string {
 		30: "Thirty",
 	}
 }
+
 const testEnumName = "TestNumericEnum"
 
 func TestKaitaiEnum_NewKaitaiEnum(t *testing.T) {
@@ -53,7 +53,7 @@ func TestKaitaiEnum_NewKaitaiEnum(t *testing.T) {
 
 	t.Run("InvalidValue", func(t *testing.T) {
 		ke, err := NewKaitaiEnum(40, testEnumName, mapping) // 40 is not in mapping
-		require.NoError(t, err) // Constructor itself doesn't error for unknown values
+		require.NoError(t, err)                             // Constructor itself doesn't error for unknown values
 		assert.Equal(t, int64(40), ke.value)
 		assert.Equal(t, "<TestNumericEnum::40>", ke.name) // Default name for unknown value
 		assert.Equal(t, testEnumName, ke.enumName)
@@ -92,7 +92,7 @@ func TestKaitaiEnum_Methods(t *testing.T) {
 	assert.Equal(t, int64(15), keInvalid.IntValue())
 	assert.Equal(t, "<TestNumericEnum::15>", keInvalid.Name())
 	assert.False(t, keInvalid.IsValid())
-	
+
 	assert.Equal(t, "enum:TestNumericEnum", keValid.KaitaiTypeName())
 	assert.Nil(t, keValid.RawBytes())
 	assert.Nil(t, keValid.Serialize())
@@ -115,25 +115,24 @@ func TestKaitaiEnum_Equal(t *testing.T) {
 	celStringTen := types.String("Ten")
 	celStringTwenty := types.String("Twenty")
 
-	assert.True(t, ke1_10a.Equal(ke1_10b).(types.Bool), "Same enum, same value")
-	assert.False(t, ke1_10a.Equal(ke1_20).(types.Bool), "Same enum, different value")
-	assert.False(t, ke1_10a.Equal(ke2_10).(types.Bool), "Different enum, same value")
+	assert.True(t, bool(ke1_10a.Equal(ke1_10b).(types.Bool)), "Same enum, same value")
+	assert.False(t, bool(ke1_10a.Equal(ke1_20).(types.Bool)), "Same enum, different value")
+	assert.False(t, bool(ke1_10a.Equal(ke2_10).(types.Bool)), "Different enum, same value")
 
-	assert.True(t, ke1_10a.Equal(celInt10).(types.Bool), "Enum vs CEL Int (same value)")
-	assert.False(t, ke1_10a.Equal(celInt20).(types.Bool), "Enum vs CEL Int (diff value)")
+	assert.True(t, bool(ke1_10a.Equal(celInt10).(types.Bool)), "Enum vs CEL Int (same value)")
+	assert.False(t, bool(ke1_10a.Equal(celInt20).(types.Bool)), "Enum vs CEL Int (diff value)")
 
-	assert.True(t, ke1_10a.Equal(celStringTen).(types.Bool), "Enum vs CEL String (same name)")
-	assert.False(t, ke1_10a.Equal(celStringTwenty).(types.Bool), "Enum vs CEL String (diff name)")
-	assert.False(t, ke1_20.Equal(celStringTen).(types.Bool), "Enum (val 20, name Twenty) vs CEL String (Ten)")
+	assert.True(t, bool(ke1_10a.Equal(celStringTen).(types.Bool)), "Enum vs CEL String (same name)")
+	assert.False(t, bool(ke1_10a.Equal(celStringTwenty).(types.Bool)), "Enum vs CEL String (diff name)")
+	assert.False(t, bool(ke1_20.Equal(celStringTen).(types.Bool)), "Enum (val 20, name Twenty) vs CEL String (Ten)")
 
-	assert.False(t, ke1_10a.Equal(types.Double(10.0)).(types.Bool), "Enum vs unrelated type")
+	assert.False(t, bool(ke1_10a.Equal(types.Double(10.0)).(types.Bool)), "Enum vs unrelated type")
 }
 
 func TestKaitaiEnum_Compare(t *testing.T) {
 	mapping := getTestEnumMapping()
 	enumName2 := "OtherEnum"
 	mapping2 := map[int64]string{5: "Five"}
-
 
 	ke1_10, _ := NewKaitaiEnum(10, testEnumName, mapping)
 	ke1_20, _ := NewKaitaiEnum(20, testEnumName, mapping)
@@ -145,10 +144,10 @@ func TestKaitaiEnum_Compare(t *testing.T) {
 
 	assert.Equal(t, types.IntZero, ke1_10.Compare(ke1_10))
 	assert.Equal(t, types.IntNegOne, ke1_10.Compare(ke1_20)) // 10 < 20
-	assert.Equal(t, types.IntOne, ke1_20.Compare(ke1_10))   // 20 > 10
+	assert.Equal(t, types.IntOne, ke1_20.Compare(ke1_10))    // 20 > 10
 
 	assert.Equal(t, types.IntZero, ke1_10.Compare(celInt10))
-	assert.Equal(t, types.IntOne, ke1_10.Compare(celInt5))    // 10 > 5
+	assert.Equal(t, types.IntOne, ke1_10.Compare(celInt5))     // 10 > 5
 	assert.Equal(t, types.IntNegOne, ke1_10.Compare(celInt15)) // 10 < 15
 
 	// Comparison with different enum types
@@ -168,7 +167,7 @@ func TestKaitaiEnum_ConvertToNative(t *testing.T) {
 	valStr, err := ke.ConvertToNative(reflect.TypeOf(""))
 	require.NoError(t, err)
 	assert.Equal(t, "Twenty", valStr)
-	
+
 	valMap, err := ke.ConvertToNative(reflect.TypeOf(map[string]interface{}{}))
 	require.NoError(t, err)
 	expectedMap := map[string]interface{}{"value": int64(20), "name": "Twenty", "enum": testEnumName}
@@ -184,7 +183,7 @@ func TestKaitaiEnum_ConvertToType(t *testing.T) {
 
 	assert.Equal(t, types.Int(20), ke.ConvertToType(types.IntType))
 	assert.Equal(t, types.String("Twenty"), ke.ConvertToType(types.StringType))
-	
+
 	// Error for unsupported CEL type conversion
 	assert.True(t, types.IsError(ke.ConvertToType(types.BoolType)))
 }
@@ -193,7 +192,7 @@ func TestKaitaiEnum_ConvertToType(t *testing.T) {
 func TestEnumTypeOptions_FunctionRegistration(t *testing.T) {
 	registry := NewEnumRegistry()
 	opts := EnumTypeOptions(registry) // This is a cel.EnvOption
-	
+
 	// This is a very basic check. To truly test, you'd need to create a CEL env
 	// with these options and try to compile/evaluate expressions using these functions.
 	// For now, just check if it returns a non-nil option.

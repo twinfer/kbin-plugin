@@ -226,7 +226,7 @@ func TestASTTransformer_Transform(t *testing.T) {
 		{
 			name:        "IO Size Attribute",
 			kaitaiExpr:  "_io.size",
-			expectedCEL: "stream_size(_io)",
+			expectedCEL: "size(_io)",
 		},
 		{
 			name:        "IO EOF Attribute",

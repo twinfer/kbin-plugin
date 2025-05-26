@@ -790,17 +790,17 @@ func (k *KaitaiSerializer) reverseProcess(goCtx context.Context, data []byte, pr
 	switch processFn {
 	case "xor":
 		// XOR is its own inverse
-		expr = fmt.Sprintf("processXOR(input, %s)", paramStr)
+		expr = fmt.Sprintf("processXOR(data, %s)", paramStr)
 	case "zlib":
 		// For serialization, if stored data is zlib-decompressed, we need to zlib-compress.
-		// Assuming a CEL function `processZlibCompress(input)` exists.
-		expr = "processZlibCompress(input)" // Placeholder: ensure this CEL function exists
+		// Assuming a CEL function `processZlibCompress(data)` exists.
+		expr = "processZlibCompress(data)" // Placeholder: ensure this CEL function exists
 		k.logger.WarnContext(goCtx, "Zlib reverse process (compression) relies on 'processZlibCompress' CEL function", "process_spec", processSpec)
 		// If no such function, this will fail at GetExpression or EvaluateExpression.
 		// return nil, fmt.Errorf("zlib compression (reverse process) not fully implemented for serialization via CEL yet")
 	case "rotate":
 		// If original process is rotate_left(N), reverse is rotate_right(N) or rotate_left(-N).
-		expr = fmt.Sprintf("processRotateRight(input, %s)", paramStr)
+		expr = fmt.Sprintf("processRotateRight(data, %s)", paramStr)
 	default:
 		return nil, fmt.Errorf("unknown process function for reverse: %s", processFn)
 	}
@@ -818,7 +818,7 @@ func (k *KaitaiSerializer) reverseProcess(goCtx context.Context, data []byte, pr
 	// For now, assuming process parameters are literals or simple.
 
 	result, err := k.expressionPool.EvaluateExpression(program, map[string]any{
-		"input": data,
+		"data": data,
 		// Potentially add other variables from sCtx if paramStr could be an expression
 	})
 	if err != nil {

@@ -6,9 +6,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/google/cel-go/cel"
 	"github.com/google/cel-go/common/types"
-	"github.com/google/cel-go/common/types/ref"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -82,28 +80,28 @@ func TestKaitaiFloat_Equal(t *testing.T) {
 	celDouble1_5 := types.Double(1.5)
 	celInt2 := types.Int(2) // For comparing float with int
 
-	assert.True(t, kf1a.Equal(kf1b).(types.Bool))
-	assert.False(t, kf1a.Equal(kf2).(types.Bool))
-	assert.True(t, kf1a.Equal(celDouble1_5).(types.Bool))
+	assert.True(t, bool(kf1a.Equal(kf1b).(types.Bool)))
+	assert.False(t, bool(kf1a.Equal(kf2).(types.Bool)))
+	assert.True(t, bool(kf1a.Equal(celDouble1_5).(types.Bool)))
 	// KaitaiFloat.Equal for types.Int checks if float value is equal to int value
-	assert.False(t, kf1a.Equal(celInt2).(types.Bool), "1.5 != 2")
+	assert.False(t, bool(kf1a.Equal(celInt2).(types.Bool)), "1.5 != 2")
 
 	kf_int_val := NewF4LEFromValue(2.0)
-	assert.True(t, kf_int_val.Equal(celInt2).(types.Bool), "2.0 == 2")
+	assert.True(t, bool(kf_int_val.Equal(celInt2).(types.Bool)), "2.0 == 2")
 
 	// Test NaN equality
 	kfNaN1 := NewF4LEFromValue(float32(math.NaN()))
 	kfNaN2 := NewF4LEFromValue(float32(math.NaN()))
 	celNaN := types.Double(math.NaN())
-	assert.True(t, kfNaN1.Equal(kfNaN2).(types.Bool), "NaN should equal NaN for KaitaiFloat")
-	assert.True(t, kfNaN1.Equal(celNaN).(types.Bool), "NaN should equal cel NaN")
+	assert.True(t, bool(kfNaN1.Equal(kfNaN2).(types.Bool)), "NaN should equal NaN for KaitaiFloat")
+	assert.True(t, bool(kfNaN1.Equal(celNaN).(types.Bool)), "NaN should equal cel NaN")
 
 	// Test Inf equality
 	kfPosInf := NewF4LEFromValue(float32(math.Inf(1)))
 	kfNegInf := NewF4LEFromValue(float32(math.Inf(-1)))
 	celPosInf := types.Double(math.Inf(1))
-	assert.True(t, kfPosInf.Equal(celPosInf).(types.Bool))
-	assert.False(t, kfPosInf.Equal(kfNegInf).(types.Bool))
+	assert.True(t, bool(kfPosInf.Equal(celPosInf).(types.Bool)))
+	assert.False(t, bool(kfPosInf.Equal(kfNegInf).(types.Bool)))
 }
 
 func TestKaitaiFloat_Compare(t *testing.T) {
@@ -114,9 +112,9 @@ func TestKaitaiFloat_Compare(t *testing.T) {
 	celInt15 := types.Int(15)
 
 	assert.Equal(t, types.IntZero, kf10_5.Compare(celDouble10_5))
-	assert.Equal(t, types.IntOne, kf10_5.Compare(celInt5))      // 10.5 > 5
-	assert.Equal(t, types.IntNegOne, kf10_5.Compare(celInt15))  // 10.5 < 15
-	assert.Equal(t, types.IntNegOne, kf10_5.Compare(kf20_0))  // 10.5 < 20.0
+	assert.Equal(t, types.IntOne, kf10_5.Compare(celInt5))     // 10.5 > 5
+	assert.Equal(t, types.IntNegOne, kf10_5.Compare(celInt15)) // 10.5 < 15
+	assert.Equal(t, types.IntNegOne, kf10_5.Compare(kf20_0))   // 10.5 < 20.0
 
 	// Error case
 	assert.True(t, types.IsError(kf10_5.Compare(types.String("10.5"))))
@@ -126,13 +124,16 @@ func TestKaitaiFloat_ConvertToNative(t *testing.T) {
 	kf := NewF4LEFromValue(float32(42.75)) // Ensure input is float32 for f4
 
 	v64, err := kf.ConvertToNative(reflect.TypeOf(float64(0)))
-	require.NoError(t, err); assert.InDelta(t, float64(42.75), v64, 1e-6)
+	require.NoError(t, err)
+	assert.InDelta(t, float64(42.75), v64, 1e-6)
 
 	v32, err := kf.ConvertToNative(reflect.TypeOf(float32(0)))
-	require.NoError(t, err); assert.InDelta(t, float32(42.75), v32, 1e-6)
+	require.NoError(t, err)
+	assert.InDelta(t, float32(42.75), v32, 1e-6)
 
 	vInt, err := kf.ConvertToNative(reflect.TypeOf(int64(0)))
-	require.NoError(t, err); assert.Equal(t, int64(42), vInt) // Truncation
+	require.NoError(t, err)
+	assert.Equal(t, int64(42), vInt) // Truncation
 
 	_, err = kf.ConvertToNative(reflect.TypeOf(""))
 	assert.Error(t, err)
@@ -163,7 +164,7 @@ func TestKaitaiFloat_Add(t *testing.T) {
 	res3 := kf1.Add(celInt2) // 1.5 + 2 = 3.5
 	require.IsType(t, types.Double(0), res3)
 	assert.InDelta(t, 3.5, float64(res3.(types.Double)), 1e-9)
-	
+
 	assert.True(t, types.IsError(kf1.Add(types.String("error"))))
 }
 
@@ -173,28 +174,43 @@ func TestReadFloatTypes(t *testing.T) {
 	dataLE := []byte{0x00, 0x00, 0x80, 0x3F, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x40} // 1.0f, 2.0
 	dataBE := []byte{0x3F, 0x80, 0x00, 0x00, 0x40, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00} // 1.0f, 2.0
 
-	f4le, err := ReadF4LE(dataLE, 0); require.NoError(t, err)
-	assert.Equal(t, float64(1.0), f4le.Value()); assert.Equal(t, "f4", f4le.typeName)
+	f4le, err := ReadF4LE(dataLE, 0)
+	require.NoError(t, err)
+	assert.Equal(t, float64(1.0), f4le.Value())
+	assert.Equal(t, "f4", f4le.typeName)
 	assert.Equal(t, dataLE[0:4], f4le.RawBytes())
 
-	f8le, err := ReadF8LE(dataLE, 4); require.NoError(t, err)
-	assert.Equal(t, float64(2.0), f8le.Value()); assert.Equal(t, "f8", f8le.typeName)
+	f8le, err := ReadF8LE(dataLE, 4)
+	require.NoError(t, err)
+	assert.Equal(t, float64(2.0), f8le.Value())
+	assert.Equal(t, "f8", f8le.typeName)
 	assert.Equal(t, dataLE[4:12], f8le.RawBytes())
 
-	f4be, err := ReadF4BE(dataBE, 0); require.NoError(t, err)
-	assert.Equal(t, float64(1.0), f4be.Value()); assert.Equal(t, "f4", f4be.typeName)
+	f4be, err := ReadF4BE(dataBE, 0)
+	require.NoError(t, err)
+	assert.Equal(t, float64(1.0), f4be.Value())
+	assert.Equal(t, "f4", f4be.typeName)
 	assert.Equal(t, dataBE[0:4], f4be.RawBytes())
 
-	f8be, err := ReadF8BE(dataBE, 4); require.NoError(t, err)
-	assert.Equal(t, float64(2.0), f8be.Value()); assert.Equal(t, "f8", f8be.typeName)
+	f8be, err := ReadF8BE(dataBE, 4)
+	require.NoError(t, err)
+	assert.Equal(t, float64(2.0), f8be.Value())
+	assert.Equal(t, "f8", f8be.typeName)
 	assert.Equal(t, dataBE[4:12], f8be.RawBytes())
 
-
 	// EOF
-	_, err = ReadF4LE(dataLE, 10); assert.Error(t, err); assert.Contains(t, err.Error(), "EOF")
-	_, err = ReadF8BE(dataBE, 8); assert.Error(t, err); assert.Contains(t, err.Error(), "EOF")
-	_, err = ReadF4BE(dataBE[:2],0); assert.Error(t,err); assert.Contains(t, err.Error(), "EOF")
-	_, err = ReadF8LE(dataLE[:6],0); assert.Error(t,err); assert.Contains(t, err.Error(), "EOF")
+	_, err = ReadF4LE(dataLE, 10)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "EOF")
+	_, err = ReadF8BE(dataBE, 8)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "EOF")
+	_, err = ReadF4BE(dataBE[:2], 0)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "EOF")
+	_, err = ReadF8LE(dataLE[:6], 0)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "EOF")
 }
 
 func TestFloatTypeOptions_Registration(t *testing.T) {
@@ -202,4 +218,3 @@ func TestFloatTypeOptions_Registration(t *testing.T) {
 	assert.NotNil(t, opts)
 	// Further testing of CEL function evaluation belongs in internal/cel/cel_test.go
 }
-```
