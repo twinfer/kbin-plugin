@@ -100,9 +100,9 @@ func TestParse_NestedType(t *testing.T) {
 	parsed, err := interp.Parse(context.Background(), stream)
 	require.NoError(t, err)
 
-	assert.Equal(t, uint8(1), getParsedValue(t, parsed, "my_header", "version"))
-	assert.Equal(t, uint8(0x80), getParsedValue(t, parsed, "my_header", "flags"))
-	assert.Equal(t, uint16(256), getParsedValue(t, parsed, "payload_size"))
+	assert.Equal(t, int64(1), getUnderlyingValue(getParsedValue(t, parsed, "my_header", "version")))
+	assert.Equal(t, int64(0x80), getUnderlyingValue(getParsedValue(t, parsed, "my_header", "flags")))
+	assert.Equal(t, int64(256), getUnderlyingValue(getParsedValue(t, parsed, "payload_size")))
 }
 
 func TestParse_ConditionalField(t *testing.T) {
@@ -121,9 +121,9 @@ func TestParse_ConditionalField(t *testing.T) {
 		stream := kaitai.NewStream(bytes.NewReader(data))
 		parsed, err := interp.Parse(context.Background(), stream)
 		require.NoError(t, err)
-		assert.Equal(t, uint8(1), getParsedValue(t, parsed, "has_extra"))
-		assert.Equal(t, uint16(0xABCD), getParsedValue(t, parsed, "extra_data"))
-		assert.Equal(t, uint8(0xFF), getParsedValue(t, parsed, "always_data"))
+		assert.Equal(t, int64(1), getUnderlyingValue(getParsedValue(t, parsed, "has_extra")))
+		assert.Equal(t, int64(0xABCD), getUnderlyingValue(getParsedValue(t, parsed, "extra_data")))
+		assert.Equal(t, int64(0xFF), getUnderlyingValue(getParsedValue(t, parsed, "always_data")))
 	})
 
 	t.Run("extra_data absent", func(t *testing.T) {
@@ -131,10 +131,10 @@ func TestParse_ConditionalField(t *testing.T) {
 		stream := kaitai.NewStream(bytes.NewReader(data))
 		parsed, err := interp.Parse(context.Background(), stream)
 		require.NoError(t, err)
-		assert.Equal(t, uint8(0), getParsedValue(t, parsed, "has_extra"))
+		assert.Equal(t, int64(0), getUnderlyingValue(getParsedValue(t, parsed, "has_extra")))
 		_, ok := parsed.Children["extra_data"]
 		assert.False(t, ok, "extra_data should not be present")
-		assert.Equal(t, uint8(0xEE), getParsedValue(t, parsed, "always_data"))
+		assert.Equal(t, int64(0xEE), getUnderlyingValue(getParsedValue(t, parsed, "always_data")))
 	})
 }
 
@@ -152,7 +152,7 @@ func TestParse_RepeatedField_CountExpr(t *testing.T) {
 
 	parsed, err := interp.Parse(context.Background(), stream)
 	require.NoError(t, err)
-	assert.Equal(t, uint8(3), getParsedValue(t, parsed, "count"))
+	assert.Equal(t, int64(3), getUnderlyingValue(getParsedValue(t, parsed, "count")))
 
 	numbersPd, ok := parsed.Children["numbers"]
 	require.True(t, ok)
@@ -160,9 +160,9 @@ func TestParse_RepeatedField_CountExpr(t *testing.T) {
 	numbersArray, ok := numbersPd.Value.([]any)
 	require.True(t, ok)
 	require.Len(t, numbersArray, 3)
-	assert.Equal(t, uint16(100), numbersArray[0].(*ParsedData).Value)
-	assert.Equal(t, uint16(200), numbersArray[1].(*ParsedData).Value)
-	assert.Equal(t, uint16(300), numbersArray[2].(*ParsedData).Value)
+	assert.Equal(t, int64(100), getUnderlyingValue(numbersArray[0].(*ParsedData).Value))
+	assert.Equal(t, int64(200), getUnderlyingValue(numbersArray[1].(*ParsedData).Value))
+	assert.Equal(t, int64(300), getUnderlyingValue(numbersArray[2].(*ParsedData).Value))
 }
 
 func TestParse_RepeatedField_EOS(t *testing.T) {
@@ -185,9 +185,9 @@ func TestParse_RepeatedField_EOS(t *testing.T) {
 	numbersArray, ok := numbersPd.Value.([]any)
 	require.True(t, ok)
 	require.Len(t, numbersArray, 3)
-	assert.Equal(t, uint8(0x0A), numbersArray[0].(*ParsedData).Value)
-	assert.Equal(t, uint8(0x0B), numbersArray[1].(*ParsedData).Value)
-	assert.Equal(t, uint8(0x0C), numbersArray[2].(*ParsedData).Value)
+	assert.Equal(t, int64(0x0A), getUnderlyingValue(numbersArray[0].(*ParsedData).Value))
+	assert.Equal(t, int64(0x0B), getUnderlyingValue(numbersArray[1].(*ParsedData).Value))
+	assert.Equal(t, int64(0x0C), getUnderlyingValue(numbersArray[2].(*ParsedData).Value))
 }
 
 func TestParse_SwitchField(t *testing.T) {
@@ -220,8 +220,8 @@ func TestParse_SwitchField(t *testing.T) {
 		stream := kaitai.NewStream(bytes.NewReader(data))
 		parsed, err := interp.Parse(context.Background(), stream)
 		require.NoError(t, err)
-		assert.Equal(t, uint8(1), getParsedValue(t, parsed, "selector"))
-		assert.Equal(t, uint8(0xAA), getParsedValue(t, parsed, "data_field", "val_a"))
+		assert.Equal(t, int64(1), getUnderlyingValue(getParsedValue(t, parsed, "selector")))
+		assert.Equal(t, int64(0xAA), getUnderlyingValue(getParsedValue(t, parsed, "data_field", "val_a")))
 	})
 
 	t.Run("selects type_b", func(t *testing.T) {
@@ -229,8 +229,8 @@ func TestParse_SwitchField(t *testing.T) {
 		stream := kaitai.NewStream(bytes.NewReader(data))
 		parsed, err := interp.Parse(context.Background(), stream)
 		require.NoError(t, err)
-		assert.Equal(t, uint8(2), getParsedValue(t, parsed, "selector"))
-		assert.Equal(t, "XY", getParsedValue(t, parsed, "data_field", "val_b"))
+		assert.Equal(t, int64(2), getUnderlyingValue(getParsedValue(t, parsed, "selector")))
+		assert.Equal(t, "XY", getUnderlyingValue(getParsedValue(t, parsed, "data_field", "val_b")))
 	})
 
 	t.Run("selects default type_a", func(t *testing.T) {
@@ -238,8 +238,8 @@ func TestParse_SwitchField(t *testing.T) {
 		stream := kaitai.NewStream(bytes.NewReader(data))
 		parsed, err := interp.Parse(context.Background(), stream)
 		require.NoError(t, err)
-		assert.Equal(t, uint8(3), getParsedValue(t, parsed, "selector"))
-		assert.Equal(t, uint8(0xBB), getParsedValue(t, parsed, "data_field", "val_a"))
+		assert.Equal(t, int64(3), getUnderlyingValue(getParsedValue(t, parsed, "selector")))
+		assert.Equal(t, int64(0xBB), getUnderlyingValue(getParsedValue(t, parsed, "data_field", "val_a")))
 	})
 }
 
@@ -261,9 +261,9 @@ func TestParse_AdHocSwitchType(t *testing.T) {
 		stream := kaitai.NewStream(bytes.NewReader(data))
 		parsed, err := interp.Parse(context.Background(), stream)
 		require.NoError(t, err)
-		assert.Equal(t, uint8(1), getParsedValue(t, parsed, "switch_key"))
+		assert.Equal(t, int64(1), getUnderlyingValue(getParsedValue(t, parsed, "switch_key")))
 		// The switched_item itself is type_x, so its child is val_x
-		assert.Equal(t, int8(-1), getParsedValue(t, parsed, "switched_item", "val_x"))
+		assert.Equal(t, int64(-1), getUnderlyingValue(getParsedValue(t, parsed, "switched_item", "val_x")))
 	})
 
 	t.Run("ad-hoc selects u2be", func(t *testing.T) {
@@ -271,8 +271,8 @@ func TestParse_AdHocSwitchType(t *testing.T) {
 		stream := kaitai.NewStream(bytes.NewReader(data))
 		parsed, err := interp.Parse(context.Background(), stream)
 		require.NoError(t, err)
-		assert.Equal(t, uint8(0), getParsedValue(t, parsed, "switch_key"))
-		assert.Equal(t, uint16(0x1234), getParsedValue(t, parsed, "switched_item"))
+		assert.Equal(t, int64(0), getUnderlyingValue(getParsedValue(t, parsed, "switch_key")))
+		assert.Equal(t, int64(0x1234), getUnderlyingValue(getParsedValue(t, parsed, "switched_item")))
 	})
 }
 
@@ -290,8 +290,8 @@ func TestParse_ContentsField(t *testing.T) {
 
 	parsed, err := interp.Parse(context.Background(), stream)
 	require.NoError(t, err)
-	assert.Equal(t, []byte{0xCA, 0xFE, 0xBA, 0xBE}, getParsedValue(t, parsed, "magic_bytes"))
-	assert.Equal(t, uint8(0xDD), getParsedValue(t, parsed, "some_data"))
+	assert.Equal(t, []byte{0xCA, 0xFE, 0xBA, 0xBE}, getUnderlyingValue(getParsedValue(t, parsed, "magic_bytes")))
+	assert.Equal(t, int64(0xDD), getUnderlyingValue(getParsedValue(t, parsed, "some_data")))
 
 	// Test content mismatch
 	dataMismatch := []byte{0xCA, 0xFE, 0xBA, 0x00, 0xDD} // Last byte of magic is wrong
@@ -312,7 +312,7 @@ func TestParse_StringField(t *testing.T) {
 		stream := kaitai.NewStream(bytes.NewReader(data))
 		parsed, err := interp.Parse(context.Background(), stream)
 		require.NoError(t, err)
-		assert.Equal(t, "hello", getParsedValue(t, parsed, "msg"))
+		assert.Equal(t, "hello", getUnderlyingValue(getParsedValue(t, parsed, "msg")))
 	})
 
 	t.Run("strz utf8", func(t *testing.T) {
@@ -325,7 +325,7 @@ func TestParse_StringField(t *testing.T) {
 		stream := kaitai.NewStream(bytes.NewReader(data))
 		parsed, err := interp.Parse(context.Background(), stream)
 		require.NoError(t, err)
-		assert.Equal(t, "world", getParsedValue(t, parsed, "term_msg"))
+		assert.Equal(t, "world", getUnderlyingValue(getParsedValue(t, parsed, "term_msg")))
 	})
 
 	t.Run("size_eos utf8", func(t *testing.T) {
@@ -338,7 +338,7 @@ func TestParse_StringField(t *testing.T) {
 		stream := kaitai.NewStream(bytes.NewReader(data))
 		parsed, err := interp.Parse(context.Background(), stream)
 		require.NoError(t, err)
-		assert.Equal(t, "end", getParsedValue(t, parsed, "eos_msg"))
+		assert.Equal(t, "end", getUnderlyingValue(getParsedValue(t, parsed, "eos_msg")))
 	})
 }
 
@@ -357,9 +357,9 @@ func TestParse_BytesField(t *testing.T) {
 
 	parsed, err := interp.Parse(context.Background(), stream)
 	require.NoError(t, err)
-	assert.Equal(t, uint8(3), getParsedValue(t, parsed, "len"))
-	assert.Equal(t, []byte{0xAA, 0xBB, 0xCC}, getParsedValue(t, parsed, "raw_data"))
-	assert.Equal(t, []byte{0xDD, 0xEE}, getParsedValue(t, parsed, "eos_data"))
+	assert.Equal(t, int64(3), getUnderlyingValue(getParsedValue(t, parsed, "len")))
+	assert.Equal(t, []byte{0xAA, 0xBB, 0xCC}, getUnderlyingValue(getParsedValue(t, parsed, "raw_data")))
+	assert.Equal(t, []byte{0xDD, 0xEE}, getUnderlyingValue(getParsedValue(t, parsed, "eos_data")))
 }
 
 func TestParse_ProcessField_XOR(t *testing.T) {
@@ -395,10 +395,10 @@ func TestParse_ProcessField_XOR(t *testing.T) {
 	parsed, err := interp.Parse(context.Background(), stream)
 	require.NoError(t, err)
 
-	assert.Equal(t, key, getParsedValue(t, parsed, "key"))
-	assert.Equal(t, uint8(2), getParsedValue(t, parsed, "data_len"))
-	assert.Equal(t, f1Logical, getParsedValue(t, parsed, "processed_payload", "field1"), "Field1 should be logical value")
-	assert.Equal(t, f2Logical, getParsedValue(t, parsed, "processed_payload", "field2"), "Field2 should be logical value")
+	assert.Equal(t, int64(key), getUnderlyingValue(getParsedValue(t, parsed, "key")))
+	assert.Equal(t, int64(2), getUnderlyingValue(getParsedValue(t, parsed, "data_len")))
+	assert.Equal(t, int64(f1Logical), getUnderlyingValue(getParsedValue(t, parsed, "processed_payload", "field1")), "Field1 should be logical value")
+	assert.Equal(t, int64(f2Logical), getUnderlyingValue(getParsedValue(t, parsed, "processed_payload", "field2")), "Field2 should be logical value")
 }
 
 func TestParse_BuiltinTypesWithEndianMeta(t *testing.T) {
@@ -426,10 +426,10 @@ func TestParse_BuiltinTypesWithEndianMeta(t *testing.T) {
 	parsed, err := interp.Parse(context.Background(), stream)
 	require.NoError(t, err)
 
-	assert.Equal(t, uint16(0x1122), getParsedValue(t, parsed, "val_u2_meta"))
-	assert.Equal(t, int32(-1430532899), getParsedValue(t, parsed, "val_s4_meta")) // 0xAABBCCDD as signed 32-bit LE
-	assert.Equal(t, float64(2.75), getParsedValue(t, parsed, "val_f8_meta"))
-	assert.Equal(t, uint16(0x3344), getParsedValue(t, parsed, "val_u2_be"))
+	assert.Equal(t, int64(0x1122), getUnderlyingValue(getParsedValue(t, parsed, "val_u2_meta")))
+	assert.Equal(t, int64(-1430532899), getUnderlyingValue(getParsedValue(t, parsed, "val_s4_meta"))) // 0xAABBCCDD as signed 32-bit LE
+	assert.Equal(t, float64(2.75), getUnderlyingValue(getParsedValue(t, parsed, "val_f8_meta")))
+	assert.Equal(t, int64(0x3344), getUnderlyingValue(getParsedValue(t, parsed, "val_u2_be")))
 }
 
 func TestParse_Instances(t *testing.T) {
@@ -452,13 +452,13 @@ func TestParse_Instances(t *testing.T) {
 	parsed, err := interp.Parse(context.Background(), stream)
 	require.NoError(t, err)
 
-	assert.Equal(t, uint8(5), getParsedValue(t, parsed, "value1"))
-	assert.Equal(t, uint8(10), getParsedValue(t, parsed, "value2"))
+	assert.Equal(t, int64(5), getUnderlyingValue(getParsedValue(t, parsed, "value1")))
+	assert.Equal(t, int64(10), getUnderlyingValue(getParsedValue(t, parsed, "value2")))
 
 	// Instances are evaluated and added to the children of the current type/root
-	assert.EqualValues(t, 15, getParsedValue(t, parsed, "sum_val"))     // 5 + 10
-	assert.EqualValues(t, 50, getParsedValue(t, parsed, "product_val")) // 5 * 10
-	assert.Equal(t, false, getParsedValue(t, parsed, "is_value1_gt"))   // 5 > 10 is false
+	assert.EqualValues(t, int64(15), getUnderlyingValue(getParsedValue(t, parsed, "sum_val")))     // 5 + 10
+	assert.EqualValues(t, int64(50), getUnderlyingValue(getParsedValue(t, parsed, "product_val"))) // 5 * 10
+	assert.Equal(t, false, getUnderlyingValue(getParsedValue(t, parsed, "is_value1_gt")))   // 5 > 10 is false
 }
 
 func TestParse_ErrorHandling(t *testing.T) {
@@ -648,7 +648,7 @@ func TestParse_RootTypeSpecifiedInMeta(t *testing.T) {
 	require.NotNil(t, parsed)
 	assert.Equal(t, "my_real_root", parsed.Type) // Check that the correct root type was parsed
 
-	assert.Equal(t, uint16(0x1234), getParsedValue(t, parsed, "data_field"))
+	assert.Equal(t, int64(0x1234), getUnderlyingValue(getParsedValue(t, parsed, "data_field")))
 	_, ok := parsed.Children["ignored_field"]
 	assert.False(t, ok, "Top-level seq field should be ignored when RootType is set")
 	_, ok = parsed.Children["other_field"]

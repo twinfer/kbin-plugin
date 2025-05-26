@@ -134,9 +134,9 @@ func (e *ExpressionPool) EvaluateExpression(program cel.Program, params map[stri
 func adaptCELResult(val any) any {
 	switch v := val.(type) {
 	case types.Int:
-		return float64(v) // Use float64 for all numbers for consistency
+		return int64(v)
 	case types.Uint:
-		return float64(v)
+		return uint64(v)
 	case types.Double:
 		return float64(v)
 	case types.Bool:
@@ -190,21 +190,21 @@ func extractVariables(expr string) []string {
 	varSet := make(map[string]bool)
 
 	// Skip known function names and keywords
+	// Refined keyword list: Only include true language keywords/literals.
+	// Standard CEL functions (like size(), to_s(), etc.) are resolved by the CEL environment
+	// and should not be listed here, as KSY fields/instances might share these names.
+	// Identifiers like _io, _parent, input, etc., will be picked up by the tokenizer
+	// if present in the expression and are not in this list. The CEL environment
+	// is responsible for knowing about these built-in names and standard functions.
+	// extractVariables aims to find user-defined identifiers needing declaration for the current expression.
 	keywords := map[string]bool{
-		"true": true, "false": true, "null": true, // Keep basic literals/keywords
-		"to_s": true, "to_i": true, "to_f": true,
-		"bitAnd": true, "bitOr": true, "bitXor": true, "bitNot": true,
-		"bitShiftLeft": true, "bitShiftRight": true,
-		"mul": true, "add": true, "pow": true, "mod": true,
-		"startsWith": true, "endsWith": true, "contains": true,
-		"substring": true, "reverse": true,
-		"at": true, "slice": true, "sliceEnd": true, "sliceRange": true,
-		"size": true, "count": true, // These are also function names
-		"abs": true, "min": true, "max": true, "ceil": true, "floor": true, "round": true, // Math functions
-		"processXOR": true, "processZlib": true, "processRotateLeft": true, "processRotateRight": true, // Process functions
-		"encodeString": true, "decodeString": true, // Encoding functions
-		"writerPos": true, "writeBytes": true, "writeU1": true, "writeU2le": true, "writeU4le": true, "writeU8le": true, "writeS1": true, "writeS2le": true, "writeS4le": true, "writeS8le": true, "writeF4le": true, "writeF8le": true, "writeU2be": true, "writeU4be": true, "writeU8be": true, "writeF4be": true, "writeF8be": true, "write": true, "newWriter": true, "writerBuffer": true, // Writer functions
-		"input": true, "_io": true, "ternary": true,
+		"true":  true,
+		"false": true,
+		"null":  true,
+		// "input", "_io", "_parent", "_root" are treated as identifiers to be potentially declared
+		// if they appear in the expression and are not part of the core CEL env provided initially.
+		// However, they are usually part of the core env or provided by default in activations.
+		// The main goal here is to avoid collision with schema-defined names.
 	}
 
 	// Simple regex-free tokenizer
