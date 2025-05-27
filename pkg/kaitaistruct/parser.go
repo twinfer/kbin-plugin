@@ -1128,6 +1128,10 @@ func (k *KaitaiInterpreter) parseBytesField(ctx context.Context, field SequenceI
 	if size > 0 {
 		// Fixed-size bytes
 		bytesData, err = pCtx.IO.ReadBytes(size)
+	} else if size == 0 {
+		// Zero-length bytes - create empty byte array
+		bytesData = []byte{}
+		err = nil
 	} else if field.SizeEOS {
 		// Read until end of stream
 		bytesData, err = pCtx.IO.ReadBytesFull()
