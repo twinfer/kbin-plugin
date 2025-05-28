@@ -391,8 +391,7 @@ func (k *KaitaiProcessor) parseFramedBinary(ctx context.Context, msg *service.Me
 			mainFramingError = fmt.Errorf("parsed frame container is not a map, got %T", frameContainerMap)
 			break // Cannot proceed if the frame structure is unexpected
 		}
-		
-		
+
 		// Convert field name to PascalCase to match the map keys from ParsedDataToMap
 		pascalFieldName := testutil.ToPascalCase(k.config.FramingDataFieldID)
 		payloadRaw, found := frameMap[pascalFieldName]
@@ -526,17 +525,17 @@ func (k *KaitaiProcessor) parseFramedBinary(ctx context.Context, msg *service.Me
 			k.logger.With("frame_start_pos", frameStartPos).Debugf("Frame payload successfully parsed and message created")
 		} else { // payloadBytes is empty
 			k.logger.Debugf("Extracted empty payload, creating empty message for this frame")
-			
+
 			// Create a message with empty structure for zero-length payloads
 			newMsg := service.NewMessage(nil)
 			newMsg.SetStructured(map[string]any{})
-			
+
 			// Copy metadata from original message
 			msg.MetaWalk(func(key, value string) error {
 				newMsg.MetaSet(key, value)
 				return nil
 			})
-			
+
 			// Set plugin-specific metadata
 			newMsg.MetaSet("kaitai_schema_path", k.config.SchemaPath)
 			effectiveDataRootType := k.config.RootType
@@ -550,11 +549,11 @@ func (k *KaitaiProcessor) parseFramedBinary(ctx context.Context, msg *service.Me
 				effectiveFramingRootType = framingSchema.Meta.ID
 			}
 			newMsg.MetaSet("kaitai_frame_root_type", effectiveFramingRootType)
-			
+
 			outputMessages = append(outputMessages, newMsg)
 			k.mParsedTotal.Incr(1)
 			k.logger.With("frame_start_pos", frameStartPos).Debugf("Empty payload message created")
-			
+
 			if frameErr == nil { // Only time if frame container parsing was successful
 				k.mFrameProcDuration.Timing(SystemTime.Since(frameParseStartTime).Nanoseconds()) // Use frameParseStartTime for frame container processing time
 			}

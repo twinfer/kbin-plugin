@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"os"
 	"testing"
 
 	"github.com/kaitai-io/kaitai_struct_go_runtime/kaitai" // Import for types.IsError and types.DefaultTypeAdapter
@@ -16,9 +15,9 @@ import (
 )
 
 func newTestInterpreter(t *testing.T, schema *KaitaiSchema) *KaitaiInterpreter {
-	// logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	// For debugging specific tests:
-	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	// logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	interp, err := NewKaitaiInterpreter(schema, logger)
 	require.NoError(t, err)
 	return interp
@@ -458,7 +457,7 @@ func TestParse_Instances(t *testing.T) {
 	// Instances are evaluated and added to the children of the current type/root
 	assert.EqualValues(t, int64(15), getUnderlyingValue(getParsedValue(t, parsed, "sum_val")))     // 5 + 10
 	assert.EqualValues(t, int64(50), getUnderlyingValue(getParsedValue(t, parsed, "product_val"))) // 5 * 10
-	assert.Equal(t, false, getUnderlyingValue(getParsedValue(t, parsed, "is_value1_gt")))   // 5 > 10 is false
+	assert.Equal(t, false, getUnderlyingValue(getParsedValue(t, parsed, "is_value1_gt")))          // 5 > 10 is false
 }
 
 func TestParse_ErrorHandling(t *testing.T) {
@@ -499,7 +498,7 @@ func TestParse_ErrorHandling(t *testing.T) {
 		stream := kaitai.NewStream(bytes.NewReader([]byte{1, 2})) // Not enough bytes for u4le
 		_, err := interp.Parse(context.Background(), stream)
 		require.Error(t, err)
-		assert.ErrorIs(t, err, io.EOF) // Kaitai runtime wraps EOF
+		assert.ErrorIs(t, err, io.ErrUnexpectedEOF) // Kaitai runtime wraps unexpected EOF
 		/*
 
 			stream.ReadU4le() should be returning io.ErrUnexpectedEOF in this scenario. Since it's not (as evidenced by the lack of the error log and the test failure), this points to an issue with the behavior of the kaitai.Stream implementation you are using (potentially version-specific or an interaction with bytes.Reader in your environment that's not behaving as expected by io.ReadFull).
@@ -543,36 +542,30 @@ func TestParseContext_AsActivation(t *testing.T) {
 	// Check current fields (should take precedence)
 	refVal, found := act.ResolveName("current_field")
 	require.True(t, found)
-	require.False(t, found, "ResolveName for current_field returned an error: %v", refVal)
 	assert.EqualValues(t, 123, refVal)
 
 	refVal, found = act.ResolveName("common_field")
 	require.True(t, found)
-	require.False(t, found, "ResolveName for common_field returned an error: %v", refVal)
 	assert.EqualValues(t, "current_common", refVal) // Current overrides parent
 
 	// Check _io
 	refVal, found = act.ResolveName("_io")
 	require.True(t, found)
-	require.False(t, found, "ResolveName for _io returned an error: %v", refVal)
 	assert.Same(t, mockIO, refVal)
 
 	// Check _root
 	refVal, found = act.ResolveName("_root")
 	require.True(t, found)
-	require.False(t, found, "ResolveName for _root returned an error: %v", refVal)
 	assert.Equal(t, rootChildren, refVal)
 
 	// Check _parent
 	refVal, found = act.ResolveName("_parent")
 	require.True(t, found)
-	require.False(t, found, "ResolveName for _parent returned an error: %v", refVal)
 	assert.Equal(t, parentChildren, refVal)
 
 	// Check field from parent (not overridden by current)
 	refVal, found = act.ResolveName("parent_field")
 	require.True(t, found)
-	require.False(t, found, "ResolveName for parent_field returned an error: %v", refVal)
 	assert.EqualValues(t, "parent_val", refVal)
 }
 

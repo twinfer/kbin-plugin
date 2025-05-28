@@ -19,7 +19,6 @@ import (
 	"github.com/kaitai-io/kaitai_struct_go_runtime/kaitai"
 	internalCel "github.com/twinfer/kbin-plugin/internal/cel"
 	"github.com/twinfer/kbin-plugin/pkg/kaitaicel"
-	"github.com/twinfer/kbin-plugin/testutil"
 )
 
 // KaitaiInterpreter provides dynamic parsing of binary data using a Kaitai schema
@@ -105,7 +104,21 @@ func (ctx *ParseContext) AsActivation() (cel.Activation, error) {
 	// Create map of variables for CEL
 	vars := make(map[string]any)
 
+	// First add parent context values (if any) so they can be overridden by current context
+	if ctx.Parent != nil {
+		for k, v := range ctx.Parent.Children {
+			vars[k] = convertForCELActivation(v)
+		}
+		// Also add parent fields under _parent for explicit access
+		parentVars := make(map[string]any)
+		for k, v := range ctx.Parent.Children {
+			parentVars[k] = convertForCELActivation(v)
+		}
+		vars["_parent"] = parentVars
+	}
+
 	// Add current context values, converting kaitai types for CEL compatibility
+	// These take precedence over parent values
 	if ctx.Children != nil {
 		for k, v := range ctx.Children {
 			vars[k] = convertForCELActivation(v)
@@ -120,13 +133,6 @@ func (ctx *ParseContext) AsActivation() (cel.Activation, error) {
 			rootVars[k] = convertForCELActivation(v)
 		}
 		vars["_root"] = rootVars
-	}
-	if ctx.Parent != nil {
-		parentVars := make(map[string]any)
-		for k, v := range ctx.Parent.Children {
-			parentVars[k] = convertForCELActivation(v)
-		}
-		vars["_parent"] = parentVars
 	}
 
 	return cel.NewActivation(vars)
@@ -1096,8 +1102,14 @@ func (k *KaitaiInterpreter) parseStringField(ctx context.Context, field Sequence
 		return nil, fmt.Errorf("reading string bytes for field '%s': %w", field.ID, err)
 	}
 
+	// Apply string processing (termination, padding)
+	processedBytes, err := k.processStringBytes(strBytes, field)
+	if err != nil {
+		return nil, fmt.Errorf("processing string bytes for field '%s': %w", field.ID, err)
+	}
+
 	// Create Kaitai string using kaitaicel with proper encoding support
-	kaitaiStr, err := kaitaicel.NewKaitaiString(strBytes, encoding)
+	kaitaiStr, err := kaitaicel.NewKaitaiString(processedBytes, encoding)
 	if err != nil {
 		k.logger.ErrorContext(ctx, "Failed to create Kaitai string", "field_id", field.ID, "encoding", encoding, "error", err)
 		return nil, fmt.Errorf("creating Kaitai string for field '%s' with encoding '%s': %w", field.ID, encoding, err)
@@ -1106,6 +1118,146 @@ func (k *KaitaiInterpreter) parseStringField(ctx context.Context, field Sequence
 	result.Value = kaitaiStr
 	k.logger.DebugContext(ctx, "Parsed string field with kaitaicel", "field_id", field.ID, "encoding", encoding, "value_len", kaitaiStr.Length(), "byte_size", kaitaiStr.ByteSize())
 	return result, nil
+}
+
+// processStringBytes handles string padding and termination options
+func (k *KaitaiInterpreter) processStringBytes(data []byte, field SequenceItem) ([]byte, error) {
+	result := data
+	terminatorFound := false
+	
+	// Handle terminator
+	if field.Terminator != nil {
+		terminator, err := k.extractByteValue(field.Terminator)
+		if err != nil {
+			return nil, fmt.Errorf("invalid terminator value: %w", err)
+		}
+		
+		// Find terminator position
+		terminatorPos := -1
+		for i, b := range result {
+			if b == terminator {
+				terminatorPos = i
+				break
+			}
+		}
+		
+		if terminatorPos >= 0 {
+			terminatorFound = true
+			// Include or exclude terminator based on 'include' field
+			include := false
+			if field.Include != nil {
+				if includeVal, ok := field.Include.(bool); ok {
+					include = includeVal
+				}
+			}
+			
+			if include {
+				// Include terminator in result
+				result = result[:terminatorPos+1]
+			} else {
+				// Exclude terminator from result  
+				result = result[:terminatorPos]
+			}
+		}
+	}
+	
+	// Handle right padding removal - only if no terminator was found
+	// (when terminator is found, padding is after the terminator)
+	if field.PadRight != nil && !terminatorFound {
+		padByte, err := k.extractByteValue(field.PadRight)
+		if err != nil {
+			return nil, fmt.Errorf("invalid pad-right value: %w", err)
+		}
+		
+		// Remove trailing padding bytes
+		for len(result) > 0 && result[len(result)-1] == padByte {
+			result = result[:len(result)-1]
+		}
+	}
+	
+	return result, nil
+}
+
+// extractByteValue converts various representations to a byte value
+func (k *KaitaiInterpreter) extractByteValue(value any) (byte, error) {
+	switch v := value.(type) {
+	case int:
+		if v < 0 || v > 255 {
+			return 0, fmt.Errorf("byte value %d out of range [0, 255]", v)
+		}
+		return byte(v), nil
+	case int8:
+		if v < 0 {
+			return 0, fmt.Errorf("byte value %d out of range [0, 255]", v)
+		}
+		return byte(v), nil
+	case int16:
+		if v < 0 || v > 255 {
+			return 0, fmt.Errorf("byte value %d out of range [0, 255]", v)
+		}
+		return byte(v), nil
+	case int32:
+		if v < 0 || v > 255 {
+			return 0, fmt.Errorf("byte value %d out of range [0, 255]", v)
+		}
+		return byte(v), nil
+	case int64:
+		if v < 0 || v > 255 {
+			return 0, fmt.Errorf("byte value %d out of range [0, 255]", v)
+		}
+		return byte(v), nil
+	case uint:
+		if v > 255 {
+			return 0, fmt.Errorf("byte value %d out of range [0, 255]", v)
+		}
+		return byte(v), nil
+	case uint8:
+		return byte(v), nil
+	case uint16:
+		if v > 255 {
+			return 0, fmt.Errorf("byte value %d out of range [0, 255]", v)
+		}
+		return byte(v), nil
+	case uint32:
+		if v > 255 {
+			return 0, fmt.Errorf("byte value %d out of range [0, 255]", v)
+		}
+		return byte(v), nil
+	case uint64:
+		if v > 255 {
+			return 0, fmt.Errorf("byte value %d out of range [0, 255]", v)
+		}
+		return byte(v), nil
+	case float32:
+		if v < 0 || v > 255 {
+			return 0, fmt.Errorf("byte value %f out of range [0, 255]", v)
+		}
+		if v != float32(int(v)) {
+			return 0, fmt.Errorf("byte value %f must be a whole number", v)
+		}
+		return byte(v), nil
+	case float64:
+		if v < 0 || v > 255 {
+			return 0, fmt.Errorf("byte value %f out of range [0, 255]", v)
+		}
+		if v != float64(int(v)) {
+			return 0, fmt.Errorf("byte value %f must be a whole number", v)
+		}
+		return byte(v), nil
+	case string:
+		// Handle hex strings like "0x40"
+		if len(v) >= 3 && v[:2] == "0x" {
+			var byteVal byte
+			_, err := fmt.Sscanf(v, "0x%x", &byteVal)
+			if err != nil {
+				return 0, fmt.Errorf("invalid hex value %s: %w", v, err)
+			}
+			return byteVal, nil
+		}
+		return 0, fmt.Errorf("unsupported string format: %s", v)
+	default:
+		return 0, fmt.Errorf("unsupported value type: %T", v)
+	}
 }
 
 // parseBytesField handles bytes fields using kaitaicel
@@ -1128,13 +1280,13 @@ func (k *KaitaiInterpreter) parseBytesField(ctx context.Context, field SequenceI
 	if size > 0 {
 		// Fixed-size bytes
 		bytesData, err = pCtx.IO.ReadBytes(size)
+	} else if field.SizeEOS {
+		// Read until end of stream
+		bytesData, err = pCtx.IO.ReadBytesFull()
 	} else if size == 0 {
 		// Zero-length bytes - create empty byte array
 		bytesData = []byte{}
 		err = nil
-	} else if field.SizeEOS {
-		// Read until end of stream
-		bytesData, err = pCtx.IO.ReadBytesFull()
 	} else {
 		return nil, fmt.Errorf("cannot determine bytes size for field '%s'", field.ID)
 	}
@@ -1244,7 +1396,7 @@ func ParsedDataToMap(data *ParsedData) any {
 
 	// Add all children
 	for name, child := range data.Children {
-		result[testutil.ToPascalCase(name)] = ParsedDataToMap(child) // Convert key to PascalCase
+		result[name] = ParsedDataToMap(child)
 	}
 
 	return result
@@ -1326,7 +1478,7 @@ func (k *KaitaiInterpreter) resolveTypeInHierarchy(typeName string) (*Type, bool
 func (k *KaitaiInterpreter) convertToEnum(ctx context.Context, result *ParsedData, enumName string) (*ParsedData, error) {
 	// Get the underlying integer value from the parsed result
 	var intValue int64
-	
+
 	// Extract integer value from different kaitaicel types
 	if kaitaiType, ok := result.Value.(kaitaicel.KaitaiType); ok {
 		switch kt := kaitaiType.(type) {

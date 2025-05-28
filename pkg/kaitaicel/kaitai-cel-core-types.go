@@ -97,7 +97,7 @@ func NewU1FromValue(value uint8) *KaitaiInt {
 	return NewKaitaiU1(value, nil)
 }
 
-// NewU2LEFromValue creates a u2le type from a value for serialization  
+// NewU2LEFromValue creates a u2le type from a value for serialization
 func NewU2LEFromValue(value uint16) *KaitaiInt {
 	return &KaitaiInt{value: int64(value), typeName: "u2le", raw: nil}
 }
@@ -1188,7 +1188,7 @@ func (k *KaitaiInt) Serialize() []byte {
 	if k.raw != nil && len(k.raw) > 0 {
 		return k.raw
 	}
-	
+
 	// Create binary data based on type name
 	switch k.typeName {
 	case "u1":

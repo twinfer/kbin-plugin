@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"math"
 	"reflect"
-	
+
 	"github.com/google/cel-go/cel"
 	"github.com/google/cel-go/common/types"
 	"github.com/google/cel-go/common/types/ref"
@@ -122,7 +122,7 @@ func (k *KaitaiFloat) Serialize() []byte {
 	if k.raw != nil && len(k.raw) > 0 {
 		return k.raw
 	}
-	
+
 	// Create binary data based on type name
 	switch k.typeName {
 	case "f4":
@@ -183,7 +183,7 @@ func (k *KaitaiFloat) Compare(other ref.Val) ref.Val {
 	default:
 		return types.NewErr("cannot compare %v with %s", other.Type(), k.typeName)
 	}
-	
+
 	if k.value < otherVal {
 		return types.IntNegOne
 	} else if k.value > otherVal {
@@ -233,7 +233,7 @@ func ReadF8BE(data []byte, offset int) (*KaitaiFloat, error) {
 func FloatTypeOptions() []cel.EnvOption {
 	return []cel.EnvOption{
 		cel.Types(&KaitaiFloat{}),
-		
+
 		cel.Function("f4",
 			cel.Overload("f4_double",
 				[]*cel.Type{cel.DoubleType},
@@ -243,7 +243,7 @@ func FloatTypeOptions() []cel.EnvOption {
 				}),
 			),
 		),
-		
+
 		cel.Function("f8",
 			cel.Overload("f8_double",
 				[]*cel.Type{cel.DoubleType},
@@ -253,7 +253,7 @@ func FloatTypeOptions() []cel.EnvOption {
 				}),
 			),
 		),
-		
+
 		cel.Function("double",
 			cel.MemberOverload("kaitai_float_to_double",
 				[]*cel.Type{KaitaiF4Type},
@@ -263,7 +263,7 @@ func FloatTypeOptions() []cel.EnvOption {
 				}),
 			),
 		),
-		
+
 		cel.Function("int",
 			cel.MemberOverload("kaitai_float_to_int",
 				[]*cel.Type{KaitaiF4Type},
@@ -273,7 +273,7 @@ func FloatTypeOptions() []cel.EnvOption {
 				}),
 			),
 		),
-		
+
 		cel.Function("_+_",
 			cel.Overload("add_kaitai_float_double",
 				[]*cel.Type{KaitaiF4Type, cel.DoubleType},
@@ -283,7 +283,7 @@ func FloatTypeOptions() []cel.EnvOption {
 				}),
 			),
 		),
-		
+
 		cel.Function("is_nan",
 			cel.MemberOverload("kaitai_float_is_nan",
 				[]*cel.Type{KaitaiF4Type},
@@ -293,7 +293,7 @@ func FloatTypeOptions() []cel.EnvOption {
 				}),
 			),
 		),
-		
+
 		cel.Function("is_inf",
 			cel.MemberOverload("kaitai_float_is_inf",
 				[]*cel.Type{KaitaiF4Type},

@@ -3,6 +3,7 @@ package kaitaistruct
 import (
 	"bytes"
 	"context"
+	"io"
 	"log/slog"
 	"os"
 	"testing"
@@ -14,7 +15,7 @@ import (
 )
 
 func newTestInterpreterWithKaitaicel(t *testing.T, schema *KaitaiSchema) *KaitaiInterpreter {
-	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	interp, err := NewKaitaiInterpreter(schema, logger)
 	require.NoError(t, err)
 	return interp
@@ -272,11 +273,11 @@ func TestKaitaicelIntegration_TypeConversionInSerialization(t *testing.T) {
 	serializedMap, ok := serialized.(map[string]interface{})
 	require.True(t, ok)
 
-	// Check that kaitaicel types are properly converted for serialization (note: field names become PascalCase)
-	assert.Equal(t, int64(0x1234), serializedMap["IntVal"], "Integer should be converted to underlying value")
-	assert.Equal(t, float64(1.0), serializedMap["FloatVal"], "Float should be converted to underlying value")
-	assert.Equal(t, "test", serializedMap["StrVal"], "String should be converted to underlying value")
-	assert.Equal(t, []byte{0xAA, 0xBB, 0xCC}, serializedMap["BytesVal"], "Bytes should be converted to underlying value")
+	// Check that kaitaicel types are properly converted for serialization
+	assert.Equal(t, int64(0x1234), serializedMap["int_val"], "Integer should be converted to underlying value")
+	assert.Equal(t, float64(1.0), serializedMap["float_val"], "Float should be converted to underlying value")
+	assert.Equal(t, "test", serializedMap["str_val"], "String should be converted to underlying value")
+	assert.Equal(t, []byte{0xAA, 0xBB, 0xCC}, serializedMap["bytes_val"], "Bytes should be converted to underlying value")
 }
 
 func TestKaitaicelIntegration_CELExpressionsWithKaitaiTypes(t *testing.T) {

@@ -17,6 +17,8 @@ benthos-kaitai
 vendor/
 
 # Generated files
+testdata/formats_kaitai_go_gen/
+testdata/kaitaistruct/formats_test/
 
 
 # IDE files
@@ -25,8 +27,7 @@ vendor/
 .github/
 *.swp
 *.swo
-test/
-testdata/
+
 # OS specific files
 .DS_Store
 Thumbs.db

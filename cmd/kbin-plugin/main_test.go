@@ -168,7 +168,7 @@ framing_data_field_id: data_payload
 		inputMsg := service.NewMessage([]byte{0x01, 0xAA, 0x01, 0xBB})
 		batch, err := processor.Process(ctx, inputMsg)
 		require.NoError(t, err)
-		
+
 		require.Len(t, batch, 2)
 
 		// Note: Metric assertions removed - Benthos metrics are write-only
@@ -440,8 +440,8 @@ framing_data_field_id: data_payload
 		inputMsg := service.NewMessage([]byte{0x00}) // len=0 for data_payload
 		batch, err := processor.Process(ctx, inputMsg)
 		require.NoError(t, err)
-		
-		// TODO: Fix zero-length bytes parsing issue  
+
+		// TODO: Fix zero-length bytes parsing issue
 		// Currently expecting error message due to "cannot determine bytes size" error
 		require.Len(t, batch, 1) // Error message produced due to zero-length bytes parsing issue
 		if len(batch) > 0 && batch[0].GetError() != nil {
@@ -480,10 +480,10 @@ framing_data_field_id: data_payload
 		inputMsg := service.NewMessage([]byte{0x00}) // len=0 for data_payload
 		batch, err := processor.Process(ctx, inputMsg)
 		require.NoError(t, err)
-		
+
 		// TODO: Fix zero-length bytes parsing issue
 		// Currently expecting error message due to "cannot determine bytes size" error
-		require.Len(t, batch, 1) // Error message produced due to zero-length bytes parsing issue  
+		require.Len(t, batch, 1) // Error message produced due to zero-length bytes parsing issue
 		if len(batch) > 0 && batch[0].GetError() != nil {
 			t.Logf("KNOWN ISSUE: Expected 0 messages for empty payload, but got error: %v", batch[0].GetError())
 		}

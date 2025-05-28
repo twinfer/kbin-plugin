@@ -169,7 +169,7 @@ func TestExpressionParser_BinaryOperations_Precedence(t *testing.T) {
 
 func TestExpressionParser_BinaryOperations_AllTypes(t *testing.T) {
 	ops := []struct {
-		opStr string
+		opStr  string
 		opEnum BinOpOp
 	}{
 		{"+", BinOpAdd}, {"-", BinOpSub}, {"*", BinOpMul}, {"/", BinOpDiv}, {"%", BinOpMod},
@@ -194,12 +194,11 @@ func TestExpressionParser_BinaryOperations_AllTypes(t *testing.T) {
 	}
 }
 
-
 func TestExpressionParser_AttributeAccess(t *testing.T) {
 	input := "obj.field1.field2"
 	ast, errs := parseExpr(t, input)
 	require.Empty(t, errs, "Parser errors for '%s': %v", input, errs)
-	
+
 	// Expected: Attr{Value: Attr{Value: Id{obj}, Name:"field1"}, Name:"field2"}
 	assertNodeType(t, ast, &Attr{}, "Root node (obj.field1.field2)")
 	attr2 := ast.(*Attr)
@@ -228,7 +227,7 @@ func TestExpressionParser_ArrayIndex(t *testing.T) {
 	innerIdx := outerIdx.Value.(*ArrayIdx)
 	assertNodeType(t, innerIdx.Idx, &Id{}, "Inner index should be Id(index_val)")
 	assert.Equal(t, "index_val", innerIdx.Idx.(*Id).Name)
-	
+
 	assertNodeType(t, innerIdx.Value, &Id{}, "Array base should be Id(my_array)")
 	assert.Equal(t, "my_array", innerIdx.Value.(*Id).Name)
 }
@@ -282,14 +281,14 @@ func TestExpressionParser_FunctionCalls(t *testing.T) {
 		require.Empty(t, errs, "Parser errors for '%s': %v", input, errs)
 		assertNodeType(t, ast, &Call{}, "Outer call node (call2)")
 		call2Node := ast.(*Call)
-		assertNodeType(t, call2Node.Args[0], &Id{Name:"x"}, "Arg for call2")
+		assertNodeType(t, call2Node.Args[0], &Id{Name: "x"}, "Arg for call2")
 
 		attrCall2 := call2Node.Value.(*Attr)
 		assert.Equal(t, "call2", attrCall2.Name)
 
 		arrayIdxNode := attrCall2.Value.(*ArrayIdx)
-		assertNodeType(t, arrayIdxNode.Idx, &IntLit{Value:0}, "Index for array")
-		
+		assertNodeType(t, arrayIdxNode.Idx, &IntLit{Value: 0}, "Index for array")
+
 		attrAnotherProp := arrayIdxNode.Value.(*Attr)
 		assert.Equal(t, "another_prop", attrAnotherProp.Name)
 
@@ -301,7 +300,7 @@ func TestExpressionParser_FunctionCalls(t *testing.T) {
 
 		attrProp := attrMethod1.Value.(*Attr)
 		assert.Equal(t, "prop", attrProp.Name)
-		assertNodeType(t, attrProp.Value, &Id{Name:"obj"}, "Base object")
+		assertNodeType(t, attrProp.Value, &Id{Name: "obj"}, "Base object")
 	})
 }
 
@@ -335,11 +334,10 @@ func TestExpressionParser_TernaryOperator(t *testing.T) {
 	ternaryPrecNode := astPrec.(*TernaryOp)
 	assertNodeType(t, ternaryPrecNode.Cond, &BinOp{}, "Ternary condition should be BinOp (&&)")
 	assert.Equal(t, BinOpAnd, ternaryPrecNode.Cond.(*BinOp).Op)
-	assertNodeType(t, ternaryPrecNode.IfTrue, &Id{Name:"c"}, "Ternary true branch")
+	assertNodeType(t, ternaryPrecNode.IfTrue, &Id{Name: "c"}, "Ternary true branch")
 	assertNodeType(t, ternaryPrecNode.IfFalse, &BinOp{}, "Ternary false branch should be BinOp (||)")
 	assert.Equal(t, BinOpOr, ternaryPrecNode.IfFalse.(*BinOp).Op)
 }
-
 
 func TestExpressionParser_Errors(t *testing.T) {
 	tests := []struct {
@@ -376,7 +374,7 @@ func TestExpressionParser_ComplexPreviouslyHardcoded(t *testing.T) {
 	expressions := []string{
 		"_io.pos + (2 * my_var) == _parent.some_array[idx_val] && !(1.0 / 2.0)",
 		"cond_val > 10 ? func(1, 2) : obj.meth().as<u2>()",
-		"a & b | c ^ d << e >> f", // This was also special-cased
+		"a & b | c ^ d << e >> f",     // This was also special-cased
 		"cond ? val_true : val_false", // And this
 	}
 

@@ -50,10 +50,10 @@ package formats_test
 import (
 	"bytes"
 	"context"
-	"os"
+	"io"
 	"log/slog"
+	"os"
 	"path/filepath"
-	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -75,7 +75,7 @@ func TestParse_{{.StructName}}(t *testing.T) {
 	
 	schema, err := kaitaistruct.NewKaitaiSchemaFromYAML(yamlData)
 	require.NoError(t, err)
-	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	interpreter, err := kaitaistruct.NewKaitaiInterpreter(schema, logger)
 	require.NoError(t, err)
 
@@ -278,6 +278,8 @@ func main() {
 		outputPath := filepath.Join(absTestOutputDir, goPackageName+"_gen_test.go")
 		if err := generateTest(tmpl, testData, outputPath); err != nil {
 			log.Printf("  Failed to generate test for %s: %v", formatName, err)
+			// Clean up any partial file that might have been created
+			os.Remove(outputPath)
 			continue
 		}
 
@@ -467,26 +469,26 @@ func (v *assertionVisitor) generateAssertion(fieldPath []string, methodName stri
 	// Generate assertion code for custom parser map access
 	var code strings.Builder
 
-	// Use PascalCase for map keys (ParsedDataToMap uses testutil.ToPascalCase)
-	pascalPath := make([]string, len(fieldPath))
+	// Convert PascalCase field names from KSC tests to snake_case for our parser
+	snakePath := make([]string, len(fieldPath))
 	for i, p := range fieldPath {
-		pascalPath[i] = toPascalCase(p) // KSY names like "my_field" become "MyField"
+		snakePath[i] = toSnakeCase(p)
 	}
 
-	fullAccessPathString := strings.Join(pascalPath, ".")
+	fullAccessPathString := strings.Join(fieldPath, ".")
 	if methodName != "" {
 		fullAccessPathString += "." + methodName // For display in comments/errors
 	}
 	code.WriteString(fmt.Sprintf("\t// Assert %s\n", fullAccessPathString))
 
 	currentMapVar := "customMap"
-	varPathPrefix := strings.ToLower(strings.Join(pascalPath, "_")) // For unique temp var names
+	varPathPrefix := strings.ToLower(strings.Join(snakePath, "_")) // For unique temp var names
 
 	// Build nested access for map[string]any
-	for i, key := range pascalPath {
+	for i, key := range snakePath {
 		tempVar := fmt.Sprintf("%s_lvl%d", varPathPrefix, i) // e.g. ltr_lvl0, header_version_lvl0
 
-		if i < len(pascalPath)-1 {
+		if i < len(snakePath)-1 {
 			// This is an intermediate key in the path, its value must be another map.
 			code.WriteString(fmt.Sprintf("\tif %s_map, ok := %s[\"%s\"].(map[string]any); ok {\n", tempVar, currentMapVar, key))
 			currentMapVar = tempVar + "_map" // Update current map variable for the next level of nesting
@@ -498,13 +500,13 @@ func (v *assertionVisitor) generateAssertion(fieldPath []string, methodName stri
 				// Accessing an instance (like AsInt, AsStr) within the map of the last key.
 				// The value of 'key' must be a map, and 'methodName' is a key in that map.
 				code.WriteString(fmt.Sprintf("\tif %s_instancemap, ok := %s[\"%s\"].(map[string]any); ok {\n", tempVar, currentMapVar, key))
-				code.WriteString(fmt.Sprintf("\t\tif %s, ok := %s_instancemap[\"%s\"]; ok {\n", finalValueVar, tempVar, methodName))
+				code.WriteString(fmt.Sprintf("\t\tif %s, ok := %s_instancemap[\"%s\"]; ok {\n", finalValueVar, tempVar, toSnakeCase(methodName)))
 				code.WriteString(fmt.Sprintf("\t\t\tassert.EqualValues(t, %s, %s)\n", expected, finalValueVar))
 				code.WriteString("\t\t} else {\n")
 				code.WriteString(fmt.Sprintf("\t\t\tt.Fatalf(\"Instance '%s' not found in %s (map was %%#v)\", %s_instancemap)\n", methodName, fullAccessPathString, tempVar))
 				code.WriteString("\t\t}\n")
 				code.WriteString("\t} else {\n")
-				code.WriteString(fmt.Sprintf("\t\tt.Fatalf(\"Field '%s' (for instance '%s') not found or not a map in %%s[\\\"%%s\\\"] (got %%T)\", %s[\"%s\"])\n", key, methodName, currentMapVar, key, currentMapVar, key))
+				code.WriteString(fmt.Sprintf("\t\tt.Fatalf(\"Field '%s' (for instance '%s') not found or not a map in %%#v (got %%T)\", %s, %s[\"%s\"])\n", key, methodName, currentMapVar, currentMapVar, key))
 				code.WriteString("\t}\n")
 			} else {
 				// Direct access to the value of the last key.
@@ -518,9 +520,9 @@ func (v *assertionVisitor) generateAssertion(fieldPath []string, methodName stri
 	}
 
 	// Close the nested if blocks correctly
-	for i := len(pascalPath) - 1; i > 0; i-- { // if len(pascalPath) is 1, this loop doesn't run
+	for i := len(snakePath) - 1; i > 0; i-- { // if len(snakePath) is 1, this loop doesn't run
 		code.WriteString("\t} else {\n")
-		code.WriteString(fmt.Sprintf("\t\tt.Fatalf(\"Field '%s' not found or not a map while asserting %s\")\n", pascalPath[i-1], fullAccessPathString))
+		code.WriteString(fmt.Sprintf("\t\tt.Fatalf(\"Field '%s' not found or not a map while asserting %s\")\n", snakePath[i-1], fullAccessPathString))
 		code.WriteString("\t}\n")
 	}
 
@@ -532,9 +534,38 @@ func (v *assertionVisitor) generateAssertion(fieldPath []string, methodName stri
 	}
 }
 
-// toPascalCase defined in kaitai-test-gen-simple.go needs to be accessible or duplicated if ParsedDataToMap uses a different one.
-func toPascalCaseFromSnake(s string) string { // Renamed to avoid conflict if already present
-	return toPascalCase(s) // Assuming toPascalCase handles snake_case to PascalCase
+// toSnakeCase converts PascalCase or camelCase to snake_case
+func toSnakeCase(s string) string {
+	// Handle empty string
+	if s == "" {
+		return s
+	}
+	
+	var result []rune
+	runes := []rune(s)
+	
+	for i, r := range runes {
+		if i > 0 && unicode.IsUpper(r) {
+			prevIsLower := unicode.IsLower(runes[i-1])
+			prevIsDigit := unicode.IsDigit(runes[i-1])
+			
+			// Check if next character exists and is lowercase (for cases like "XMLParser" -> "xml_parser")
+			nextIsLower := i+1 < len(runes) && unicode.IsLower(runes[i+1])
+			
+			// Insert underscore before uppercase letter if:
+			// 1. Previous char is lowercase or digit
+			// 2. Or this is part of an acronym followed by a lowercase letter
+			if prevIsLower || prevIsDigit || (i > 1 && nextIsLower && unicode.IsUpper(runes[i-1])) {
+				result = append(result, '_')
+			}
+		} else if i > 0 && unicode.IsDigit(r) && !unicode.IsDigit(runes[i-1]) {
+			// Insert underscore before digit if previous character is not a digit
+			result = append(result, '_')
+		}
+		result = append(result, unicode.ToLower(r))
+	}
+	
+	return string(result)
 }
 
 func (v *assertionVisitor) nodeToString(node ast.Node) string {
@@ -551,6 +582,11 @@ func generateTest(tmpl *template.Template, data *TestData, outputPath string) er
 		return err
 	}
 
+	// Check that we have meaningful content
+	if buf.Len() < 100 {
+		return fmt.Errorf("generated content too small (%d bytes), likely an error", buf.Len())
+	}
+
 	// Add maps import if not already there, for maps.Keys inFatalf
 	if !bytes.Contains(buf.Bytes(), []byte("\"maps\"")) {
 		// This is a bit of a hack; ideally, imports are managed more robustly.
@@ -565,7 +601,15 @@ func generateTest(tmpl *template.Template, data *TestData, outputPath string) er
 
 	if err := cmd.Run(); err != nil {
 		// Write unformatted if goimports fails
-		return os.WriteFile(outputPath, buf.Bytes(), 0644)
+		if buf.Len() > 0 {
+			return os.WriteFile(outputPath, buf.Bytes(), 0644)
+		}
+		return fmt.Errorf("goimports failed and no content to write: %v", err)
+	}
+
+	// Check that goimports produced output
+	if out.Len() == 0 {
+		return fmt.Errorf("goimports produced no output")
 	}
 
 	return os.WriteFile(outputPath, out.Bytes(), 0644)

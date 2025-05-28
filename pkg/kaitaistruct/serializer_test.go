@@ -4,8 +4,8 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"log/slog"
-	"os"
 	"testing"
 
 	"github.com/kaitai-io/kaitai_struct_go_runtime/kaitai"
@@ -15,9 +15,9 @@ import (
 )
 
 func newTestSerializer(t *testing.T, schema *KaitaiSchema) *KaitaiSerializer {
-	// logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	// For debugging, you can use:
-	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	// logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	s, err := NewKaitaiSerializer(schema, logger)
 	require.NoError(t, err)
 	return s

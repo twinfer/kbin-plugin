@@ -13,9 +13,6 @@ import (
 func NewEnvironment() (*cel.Env, error) {
 	// Create the CEL environment with standard library functions and Kaitai-specific functions
 	env, err := cel.NewEnv(
-		// Register variable types and declare core functions
-		cel.Variable("input", cel.BytesType),
-
 		// Add custom type adapter to handle conversion between Go and CEL types
 		cel.CustomTypeAdapter(types.DefaultTypeAdapter),
 
