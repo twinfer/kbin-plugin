@@ -45,39 +45,39 @@ func TestKaitaicelIntegration_PrimitiveTypes(t *testing.T) {
 			{ID: "f8be_val", Type: "f8be"},
 		},
 	}
-	
+
 	interp := newTestInterpreterWithKaitaicel(t, schema)
-	
+
 	// Create test data with specific values
 	data := []byte{
-		0xA1,                                           // u1: 161
-		0x34, 0x12,                                     // u2le: 0x1234
-		0x56, 0x78,                                     // u2be: 0x5678
-		0x78, 0x56, 0x34, 0x12,                         // u4le: 0x12345678
-		0x9A, 0xBC, 0xDE, 0xF0,                         // u4be: 0x9ABCDEF0
+		0xA1,       // u1: 161
+		0x34, 0x12, // u2le: 0x1234
+		0x56, 0x78, // u2be: 0x5678
+		0x78, 0x56, 0x34, 0x12, // u4le: 0x12345678
+		0x9A, 0xBC, 0xDE, 0xF0, // u4be: 0x9ABCDEF0
 		0x78, 0x56, 0x34, 0x12, 0xF0, 0xDE, 0xBC, 0x9A, // u8le: 0x9ABCDEF012345678
 		0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, // u8be: 0x1122334455667788
-		0xFF,                                           // s1: -1
-		0xFF, 0xFF,                                     // s2le: -1
-		0xFF, 0xFF,                                     // s2be: -1
-		0xFF, 0xFF, 0xFF, 0xFF,                         // s4le: -1
-		0xFF, 0xFF, 0xFF, 0xFF,                         // s4be: -1
+		0xFF,       // s1: -1
+		0xFF, 0xFF, // s2le: -1
+		0xFF, 0xFF, // s2be: -1
+		0xFF, 0xFF, 0xFF, 0xFF, // s4le: -1
+		0xFF, 0xFF, 0xFF, 0xFF, // s4be: -1
 		0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, // s8le: -1
 		0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, // s8be: -1
-		0x00, 0x00, 0x80, 0x3F,                         // f4le: 1.0
-		0x3F, 0x80, 0x00, 0x00,                         // f4be: 1.0
+		0x00, 0x00, 0x80, 0x3F, // f4le: 1.0
+		0x3F, 0x80, 0x00, 0x00, // f4be: 1.0
 		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xF0, 0x3F, // f8le: 1.0
 		0x3F, 0xF0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // f8be: 1.0
 	}
-	
+
 	stream := kaitai.NewStream(bytes.NewReader(data))
 	parsed, err := interp.Parse(context.Background(), stream)
 	require.NoError(t, err)
-	
+
 	// Test that values are correctly parsed as kaitaicel types
 	tests := []struct {
-		field    string
-		expected interface{}
+		field     string
+		expected  interface{}
 		typeCheck func(interface{}) bool
 	}{
 		{"u1_val", int64(161), func(v interface{}) bool { _, ok := v.(*kaitaicel.KaitaiInt); return ok }},
@@ -97,14 +97,14 @@ func TestKaitaicelIntegration_PrimitiveTypes(t *testing.T) {
 		{"f8le_val", float64(1.0), func(v interface{}) bool { _, ok := v.(*kaitaicel.KaitaiFloat); return ok }},
 		{"f8be_val", float64(1.0), func(v interface{}) bool { _, ok := v.(*kaitaicel.KaitaiFloat); return ok }},
 	}
-	
+
 	for _, test := range tests {
 		t.Run(test.field, func(t *testing.T) {
 			value := getParsedValue(t, parsed, test.field)
-			
+
 			// Check that it's the correct kaitaicel type
 			assert.True(t, test.typeCheck(value), "Field %s should be a kaitaicel type", test.field)
-			
+
 			// Check that the underlying value is correct
 			if kaitaiType, ok := value.(kaitaicel.KaitaiType); ok {
 				assert.Equal(t, test.expected, kaitaiType.Value(), "Field %s should have correct value", test.field)
@@ -124,17 +124,17 @@ func TestKaitaicelIntegration_BitFields(t *testing.T) {
 			{ID: "bit12be", Type: "b12be"},
 		},
 	}
-	
+
 	interp := newTestInterpreterWithKaitaicel(t, schema)
-	
+
 	// Note: This is a simplified test - actual bit field parsing depends on
 	// how the bit stream is handled by the Kaitai runtime
 	data := []byte{0xFF, 0xFF, 0xFF, 0xFF, 0xFF}
 	stream := kaitai.NewStream(bytes.NewReader(data))
-	
+
 	parsed, err := interp.Parse(context.Background(), stream)
 	require.NoError(t, err)
-	
+
 	// Test that bit fields are created as KaitaiBitField types
 	bitFields := []string{"bit1", "bit3", "bit4", "bit8le", "bit12be"}
 	for _, field := range bitFields {
@@ -157,20 +157,20 @@ func TestKaitaicelIntegration_StringTypes(t *testing.T) {
 			{ID: "eos_str", Type: "str", SizeEOS: true},
 		},
 	}
-	
+
 	interp := newTestInterpreterWithKaitaicel(t, schema)
-	
+
 	data := []byte{
-		'h', 'e', 'l', 'l', 'o',    // fixed_str: "hello"
+		'h', 'e', 'l', 'l', 'o', // fixed_str: "hello"
 		'w', 'o', 'r', 'l', 'd', 0, // term_str: "world"
-		't', 'e', 's', 't',         // encoded_str: "test"
-		'e', 'n', 'd',              // eos_str: "end"
+		't', 'e', 's', 't', // encoded_str: "test"
+		'e', 'n', 'd', // eos_str: "end"
 	}
-	
+
 	stream := kaitai.NewStream(bytes.NewReader(data))
 	parsed, err := interp.Parse(context.Background(), stream)
 	require.NoError(t, err)
-	
+
 	tests := []struct {
 		field    string
 		expected string
@@ -181,18 +181,18 @@ func TestKaitaicelIntegration_StringTypes(t *testing.T) {
 		{"encoded_str", "test", "ASCII"},
 		{"eos_str", "end", "UTF-8"},
 	}
-	
+
 	for _, test := range tests {
 		t.Run(test.field, func(t *testing.T) {
 			value := getParsedValue(t, parsed, test.field)
-			
+
 			// Check that it's a KaitaiString
 			kaitaiStr, ok := value.(*kaitaicel.KaitaiString)
 			assert.True(t, ok, "Field %s should be a KaitaiString", test.field)
-			
+
 			// Check the string value
 			assert.Equal(t, test.expected, kaitaiStr.Value(), "Field %s should have correct string value", test.field)
-			
+
 			// Check encoding methods
 			assert.Equal(t, len(test.expected), kaitaiStr.Length(), "Field %s should have correct length", test.field)
 			assert.True(t, kaitaiStr.ByteSize() >= len(test.expected), "Field %s should have correct byte size", test.field)
@@ -209,32 +209,32 @@ func TestKaitaicelIntegration_BytesTypes(t *testing.T) {
 			{ID: "rest", Type: "bytes", SizeEOS: true},
 		},
 	}
-	
+
 	interp := newTestInterpreterWithKaitaicel(t, schema)
-	
+
 	data := []byte{
-		0x03,                   // len: 3
-		0xAA, 0xBB, 0xCC,       // data: [AA, BB, CC]
-		0xDD, 0xEE, 0xFF,       // rest: [DD, EE, FF]
+		0x03,             // len: 3
+		0xAA, 0xBB, 0xCC, // data: [AA, BB, CC]
+		0xDD, 0xEE, 0xFF, // rest: [DD, EE, FF]
 	}
-	
+
 	stream := kaitai.NewStream(bytes.NewReader(data))
 	parsed, err := interp.Parse(context.Background(), stream)
 	require.NoError(t, err)
-	
+
 	// Check len field
 	lenValue := getParsedValue(t, parsed, "len")
 	lenInt, ok := lenValue.(*kaitaicel.KaitaiInt)
 	assert.True(t, ok)
 	assert.Equal(t, int64(3), lenInt.Value())
-	
+
 	// Check data field
 	dataValue := getParsedValue(t, parsed, "data")
 	dataBytes, ok := dataValue.(*kaitaicel.KaitaiBytes)
 	assert.True(t, ok, "data field should be KaitaiBytes")
 	assert.Equal(t, []byte{0xAA, 0xBB, 0xCC}, dataBytes.Value())
 	assert.Equal(t, 3, dataBytes.Length())
-	
+
 	// Check rest field
 	restValue := getParsedValue(t, parsed, "rest")
 	restBytes, ok := restValue.(*kaitaicel.KaitaiBytes)
@@ -253,25 +253,25 @@ func TestKaitaicelIntegration_TypeConversionInSerialization(t *testing.T) {
 			{ID: "bytes_val", Type: "bytes", Size: 3},
 		},
 	}
-	
+
 	interp := newTestInterpreterWithKaitaicel(t, schema)
-	
+
 	data := []byte{
-		0x34, 0x12,             // int_val: 0x1234
+		0x34, 0x12, // int_val: 0x1234
 		0x00, 0x00, 0x80, 0x3F, // float_val: 1.0
-		't', 'e', 's', 't',     // str_val: "test"
-		0xAA, 0xBB, 0xCC,       // bytes_val: [AA, BB, CC]
+		't', 'e', 's', 't', // str_val: "test"
+		0xAA, 0xBB, 0xCC, // bytes_val: [AA, BB, CC]
 	}
-	
+
 	stream := kaitai.NewStream(bytes.NewReader(data))
 	parsed, err := interp.Parse(context.Background(), stream)
 	require.NoError(t, err)
-	
+
 	// Convert to map for serialization
 	serialized := ParsedDataToMap(parsed)
 	serializedMap, ok := serialized.(map[string]interface{})
 	require.True(t, ok)
-	
+
 	// Check that kaitaicel types are properly converted for serialization (note: field names become PascalCase)
 	assert.Equal(t, int64(0x1234), serializedMap["IntVal"], "Integer should be converted to underlying value")
 	assert.Equal(t, float64(1.0), serializedMap["FloatVal"], "Float should be converted to underlying value")
@@ -292,18 +292,18 @@ func TestKaitaicelIntegration_CELExpressionsWithKaitaiTypes(t *testing.T) {
 			"doubled":     {Value: "len * 2"},
 		},
 	}
-	
+
 	interp := newTestInterpreterWithKaitaicel(t, schema)
-	
+
 	data := []byte{
-		0x04,                   // len: 4
-		'h', 'i', '!', '!',     // data: "hi!!"
+		0x04,               // len: 4
+		'h', 'i', '!', '!', // data: "hi!!"
 	}
-	
+
 	stream := kaitai.NewStream(bytes.NewReader(data))
 	parsed, err := interp.Parse(context.Background(), stream)
 	require.NoError(t, err)
-	
+
 	// Check that CEL expressions work with kaitaicel types
 	assert.EqualValues(t, 4, getParsedValue(t, parsed, "data_length"))
 	assert.Equal(t, true, getParsedValue(t, parsed, "is_short"))
@@ -314,31 +314,31 @@ func TestKaitaicelIntegration_EndianHandling(t *testing.T) {
 	schema := &KaitaiSchema{
 		Meta: Meta{ID: "endian_test", Endian: "be"}, // Default big-endian
 		Seq: []SequenceItem{
-			{ID: "default_u2", Type: "u2"},     // Should use meta endian (be)
-			{ID: "explicit_le", Type: "u2le"},  // Explicit little-endian
-			{ID: "explicit_be", Type: "u2be"},  // Explicit big-endian
+			{ID: "default_u2", Type: "u2"},    // Should use meta endian (be)
+			{ID: "explicit_le", Type: "u2le"}, // Explicit little-endian
+			{ID: "explicit_be", Type: "u2be"}, // Explicit big-endian
 		},
 	}
-	
+
 	interp := newTestInterpreterWithKaitaicel(t, schema)
-	
+
 	data := []byte{
 		0x12, 0x34, // default_u2: 0x1234 (be)
 		0x56, 0x78, // explicit_le: 0x7856 (le)
 		0x9A, 0xBC, // explicit_be: 0x9ABC (be)
 	}
-	
+
 	stream := kaitai.NewStream(bytes.NewReader(data))
 	parsed, err := interp.Parse(context.Background(), stream)
 	require.NoError(t, err)
-	
+
 	// Check that endianness is handled correctly
 	defaultVal := getParsedValue(t, parsed, "default_u2").(*kaitaicel.KaitaiInt)
 	assert.Equal(t, int64(0x1234), defaultVal.Value())
-	
+
 	leVal := getParsedValue(t, parsed, "explicit_le").(*kaitaicel.KaitaiInt)
 	assert.Equal(t, int64(0x7856), leVal.Value())
-	
+
 	beVal := getParsedValue(t, parsed, "explicit_be").(*kaitaicel.KaitaiInt)
 	assert.Equal(t, int64(0x9ABC), beVal.Value())
 }
@@ -350,22 +350,22 @@ func TestKaitaicelIntegration_RawBytesAccess(t *testing.T) {
 			{ID: "value", Type: "u4le"},
 		},
 	}
-	
+
 	interp := newTestInterpreterWithKaitaicel(t, schema)
-	
+
 	data := []byte{0x78, 0x56, 0x34, 0x12} // u4le: 0x12345678
 	stream := kaitai.NewStream(bytes.NewReader(data))
 	parsed, err := interp.Parse(context.Background(), stream)
 	require.NoError(t, err)
-	
+
 	value := getParsedValue(t, parsed, "value")
 	kaitaiInt, ok := value.(*kaitaicel.KaitaiInt)
 	require.True(t, ok)
-	
+
 	// Check that we can access raw bytes
 	rawBytes := kaitaiInt.RawBytes()
 	assert.Equal(t, []byte{0x78, 0x56, 0x34, 0x12}, rawBytes)
-	
+
 	// Check type name
 	assert.Equal(t, "u4", kaitaiInt.KaitaiTypeName())
 }
@@ -378,16 +378,16 @@ func TestKaitaicelIntegration_ErrorHandling(t *testing.T) {
 				{ID: "bad_str", Type: "str", Size: 4, Encoding: "INVALID_ENCODING"},
 			},
 		}
-		
+
 		interp := newTestInterpreterWithKaitaicel(t, schema)
 		data := []byte{'t', 'e', 's', 't'}
 		stream := kaitai.NewStream(bytes.NewReader(data))
-		
+
 		_, err := interp.Parse(context.Background(), stream)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "unsupported encoding")
 	})
-	
+
 	t.Run("bit field out of range", func(t *testing.T) {
 		// This would require internal bit field creation to fail
 		// The actual test depends on how bit fields are validated
@@ -397,14 +397,14 @@ func TestKaitaicelIntegration_ErrorHandling(t *testing.T) {
 				{ID: "normal_bit", Type: "b8"},
 			},
 		}
-		
+
 		interp := newTestInterpreterWithKaitaicel(t, schema)
 		data := []byte{0xFF}
 		stream := kaitai.NewStream(bytes.NewReader(data))
-		
+
 		parsed, err := interp.Parse(context.Background(), stream)
 		require.NoError(t, err) // Normal bit field should work
-		
+
 		value := getParsedValue(t, parsed, "normal_bit")
 		bitField, ok := value.(*kaitaicel.KaitaiBitField)
 		assert.True(t, ok)
@@ -423,20 +423,19 @@ func BenchmarkKaitaicelIntegration_SimpleTypes(b *testing.B) {
 			{ID: "str_val", Type: "str", Size: 4},
 		},
 	}
-	
+
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 	interp, err := NewKaitaiInterpreter(schema, logger)
 	require.NoError(b, err)
-	
+
 	data := []byte{
-		0xFF,                   // u1_val
-		0x34, 0x12,             // u2le_val
+		0xFF,       // u1_val
+		0x34, 0x12, // u2le_val
 		0x78, 0x56, 0x34, 0x12, // u4le_val
-		't', 'e', 's', 't',     // str_val
+		't', 'e', 's', 't', // str_val
 	}
-	
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+
+	for b.Loop() {
 		stream := kaitai.NewStream(bytes.NewReader(data))
 		_, err := interp.Parse(context.Background(), stream)
 		if err != nil {
