@@ -5,10 +5,11 @@ import (
 	"github.com/google/cel-go/common/types"
 	"github.com/google/cel-go/common/types/ref"
 	"github.com/kaitai-io/kaitai_struct_go_runtime/kaitai"
+	"github.com/twinfer/kbin-plugin/pkg/kaitaicel"
 )
 
 // streamOperations returns CEL function declarations for Kaitai stream operations
-func streamOperations() cel.EnvOption {
+func StreamOperations() cel.EnvOption {
 	return cel.Lib(&streamLib{})
 }
 
@@ -16,6 +17,53 @@ type streamLib struct{}
 
 func (*streamLib) CompileOptions() []cel.EnvOption {
 	return []cel.EnvOption{
+		// Special accessor functions for _io properties
+		cel.Function("io_pos",
+			cel.Overload("io_pos_any", []*cel.Type{cel.AnyType}, cel.IntType,
+				cel.UnaryBinding(func(val ref.Val) ref.Val {
+					// Handle our KaitaiStream wrapper
+					if kaitaiStream, ok := val.Value().(*kaitaicel.KaitaiStream); ok {
+						pos, err := kaitaiStream.Pos()
+						if err != nil {
+							return types.NewErr("failed to get position: %v", err)
+						}
+						return types.Int(pos)
+					}
+					if stream, ok := val.Value().(*kaitai.Stream); ok {
+						pos, err := stream.Pos()
+						if err != nil {
+							return types.NewErr("failed to get position: %v", err)
+						}
+						return types.Int(pos)
+					}
+					return types.NewErr("expected Stream for io_pos function")
+				}),
+			),
+		),
+
+		cel.Function("io_size",
+			cel.Overload("io_size_any", []*cel.Type{cel.AnyType}, cel.IntType,
+				cel.UnaryBinding(func(val ref.Val) ref.Val {
+					// Handle our KaitaiStream wrapper
+					if kaitaiStream, ok := val.Value().(*kaitaicel.KaitaiStream); ok {
+						size, err := kaitaiStream.Size()
+						if err != nil {
+							return types.NewErr("failed to get size: %v", err)
+						}
+						return types.Int(size)
+					}
+					if stream, ok := val.Value().(*kaitai.Stream); ok {
+						size, err := stream.Size()
+						if err != nil {
+							return types.NewErr("failed to get size: %v", err)
+						}
+						return types.Int(size)
+					}
+					return types.NewErr("expected Stream for io_size function")
+				}),
+			),
+		),
+
 		// Stream position
 		cel.Function("pos",
 			cel.Overload("pos_stream", []*cel.Type{cel.AnyType}, cel.IntType,
@@ -70,6 +118,14 @@ func (*streamLib) CompileOptions() []cel.EnvOption {
 		cel.Function("isEOF",
 			cel.Overload("iseof_stream", []*cel.Type{cel.AnyType}, cel.BoolType,
 				cel.UnaryBinding(func(val ref.Val) ref.Val {
+					// Handle our KaitaiStream wrapper
+					if kaitaiStream, ok := val.Value().(*kaitaicel.KaitaiStream); ok {
+						isEof, err := kaitaiStream.EOF()
+						if err != nil {
+							return types.NewErr("failed to check EOF: %v", err)
+						}
+						return types.Bool(isEof)
+					}
 					if stream, ok := val.Value().(*kaitai.Stream); ok {
 						isEof, err := stream.EOF()
 						if err != nil {

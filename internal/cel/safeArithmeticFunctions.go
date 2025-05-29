@@ -7,7 +7,7 @@ import (
 )
 
 // safeArithmeticFunctions returns CEL function declarations for safe arithmetic operations.
-func safeArithmeticFunctions() cel.EnvOption {
+func SafeArithmeticFunctions() cel.EnvOption {
 	return cel.Lib(&safeArithmeticLib{})
 }
 

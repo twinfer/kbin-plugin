@@ -73,9 +73,7 @@ const (
 	TernaryPrecedence        // ? :
 	LogicalOrPrecedence      // ||
 	LogicalAndPrecedence     // &&
-	BitwiseOrPrecedence      // |
-	BitwiseXorPrecedence     // ^
-	BitwiseAndPrecedence     // &
+	BitwisePrecedence        // & | ^ (same precedence, left-associative)
 	EqualityPrecedence       // == !=
 	ComparisonPrecedence     // < > <= >=
 	ShiftPrecedence          // << >>
@@ -90,17 +88,17 @@ const (
 var precedences = map[ExpressionTokenType]Precedence{
 	EXPR_LOGIC_OR:         LogicalOrPrecedence,
 	EXPR_LOGIC_AND:        LogicalAndPrecedence,
-	EXPR_BIT_OR:           BitwiseOrPrecedence,
-	EXPR_BIT_XOR:          BitwiseXorPrecedence,
-	EXPR_BIT_AND:          BitwiseAndPrecedence,
+	EXPR_BIT_OR:           BitwisePrecedence,
+	EXPR_BIT_XOR:          BitwisePrecedence,
+	EXPR_BIT_AND:          BitwisePrecedence,
 	EXPR_EQ:               EqualityPrecedence,
 	EXPR_NEQ:              EqualityPrecedence,
 	EXPR_LT:               ComparisonPrecedence,
 	EXPR_GT:               ComparisonPrecedence,
 	EXPR_LE:               ComparisonPrecedence,
 	EXPR_GE:               ComparisonPrecedence,
-	EXPR_LSHIFT:           ShiftPrecedence,
-	EXPR_RSHIFT:           ShiftPrecedence,
+	EXPR_LSHIFT:           BitwisePrecedence,
+	EXPR_RSHIFT:           BitwisePrecedence,
 	EXPR_PLUS:             AdditivePrecedence,
 	EXPR_MINUS:            AdditivePrecedence,
 	EXPR_STAR:             MultiplicativePrecedence,
@@ -200,6 +198,8 @@ func (p *ExpressionParser) prefixParseFn(tokenType ExpressionTokenType) func() E
 		return p.parseRoot
 	case EXPR_BYTES_REMAINING:
 		return p.parseBytesRemaining
+	case EXPR_LBRACKET:
+		return p.parseArrayLiteral
 	default:
 		return nil
 	}
@@ -307,15 +307,39 @@ func (p *ExpressionParser) parsePrefixExpression() Expr {
 
 func (p *ExpressionParser) parseSizeOfExpression() Expr {
 	pos := Pos{p.token.Line, p.token.Column}
+
+	// Check for sizeof<type> syntax (angle brackets)
+	if p.peek.Type == EXPR_LT {
+		if !p.expectPeek(EXPR_LT) { // consume '<'
+			p.AddError("expected '<' after sizeof")
+			return nil
+		}
+		if !p.expectPeek(EXPR_IDENT) { // expect identifier for type name
+			p.AddError("expected type identifier in sizeof<>")
+			return nil
+		}
+		// Create identifier expression from current token
+		typeExpr := &Id{Name: p.token.Literal, P: Pos{p.token.Line, p.token.Column}}
+		if !p.expectPeek(EXPR_GT) {
+			p.AddError("expected '>' to close sizeof<>")
+			return nil
+		}
+		return &SizeOf{Value: typeExpr, P: pos}
+	}
+
+	// Fallback to original sizeof(type) syntax (parentheses) for compatibility
 	if !p.expectPeek(EXPR_LPAREN) {
+		p.AddError("expected '(' or '<' after sizeof")
 		return nil
 	}
 	p.nextToken() // Consume '('
 	exp := p.parseExpression(LowestPrecedence)
 	if exp == nil {
+		p.AddError("failed to parse type expression in sizeof()")
 		return nil
 	}
 	if !p.expectPeek(EXPR_RPAREN) {
+		p.AddError("expected ')' to close sizeof()")
 		return nil
 	}
 	return &SizeOf{Value: exp, P: pos}
@@ -477,11 +501,23 @@ func (p *ExpressionParser) parseDotExpression(left Expr) Expr {
 		// Use the position of the value being cast, not the dot
 		return &CastToType{Value: left, TypeName: typeName, P: left.Pos()}
 	}
-	if p.token.Type != EXPR_IDENT {
+	// Accept both regular identifiers and special tokens like _io after '.'
+	var attrName string
+	switch p.token.Type {
+	case EXPR_IDENT:
+		attrName = p.token.Literal
+	case EXPR_IO:
+		attrName = "_io"
+	case EXPR_PARENT:
+		attrName = "_parent"
+	case EXPR_ROOT:
+		attrName = "_root"
+	case EXPR_BYTES_REMAINING:
+		attrName = "_bytes_remaining"
+	default:
 		p.AddError(fmt.Sprintf("expected identifier after '.', got %s", p.token.String()))
 		return nil
 	}
-	attrName := p.token.Literal
 	return &Attr{Value: left, Name: attrName, P: dotPos}
 }
 
@@ -518,4 +554,40 @@ func (p *ExpressionParser) parseArrayIndexExpression(array Expr) Expr {
 		return nil
 	}
 	return &ArrayIdx{Value: array, Idx: idxExp, P: arrayPos}
+}
+
+func (p *ExpressionParser) parseArrayLiteral() Expr {
+	leftBracketPos := Pos{Line: p.token.Line, Column: p.token.Column}
+	var elements []Expr
+
+	// Handle empty array []
+	if p.peek.Type == EXPR_RBRACKET {
+		p.nextToken() // consume ']'
+		return &ArrayLit{Elements: elements, P: leftBracketPos}
+	}
+
+	// Parse first element
+	p.nextToken()
+	firstElement := p.parseExpression(LowestPrecedence)
+	if firstElement == nil {
+		return nil
+	}
+	elements = append(elements, firstElement)
+
+	// Parse remaining elements
+	for p.peek.Type == EXPR_COMMA {
+		p.nextToken() // consume ','
+		p.nextToken() // move to next element
+		element := p.parseExpression(LowestPrecedence)
+		if element == nil {
+			return nil
+		}
+		elements = append(elements, element)
+	}
+
+	if !p.expectPeek(EXPR_RBRACKET) {
+		return nil
+	}
+
+	return &ArrayLit{Elements: elements, P: leftBracketPos}
 }

@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"math"
 	"reflect"
+	"strconv"
+	"strings"
 	"unicode/utf8"
 
 	"github.com/google/cel-go/cel"
@@ -1102,8 +1104,118 @@ func NewKaitaiTypeFromValue(value any, typeName string) (KaitaiType, error) {
 			return nil, fmt.Errorf("cannot convert %T to f8be", value)
 		}
 	default:
+		// Check for bit field types (b1, b2, b3, ... b64, with optional endianness)
+		if matched, bitCount, endian := parseBitFieldType(typeName); matched {
+			return newKaitaiBitFieldFromValue(value, bitCount, endian)
+		}
 		return nil, fmt.Errorf("unsupported type: %s", typeName)
 	}
+}
+
+// parseBitFieldType parses bit field type names like "b1", "b12le", "b40be"
+func parseBitFieldType(typeName string) (matched bool, bitCount int, endian string) {
+	// Match patterns like b1, b12, b12le, b40be
+	if len(typeName) < 2 || typeName[0] != 'b' {
+		return false, 0, ""
+	}
+	
+	// Extract the number and optional endianness
+	if strings.HasSuffix(typeName, "le") {
+		numStr := typeName[1 : len(typeName)-2]
+		if count, err := strconv.Atoi(numStr); err == nil && count >= 1 && count <= 64 {
+			return true, count, "le"
+		}
+	} else if strings.HasSuffix(typeName, "be") {
+		numStr := typeName[1 : len(typeName)-2]
+		if count, err := strconv.Atoi(numStr); err == nil && count >= 1 && count <= 64 {
+			return true, count, "be"
+		}
+	} else {
+		// No endianness specified
+		numStr := typeName[1:]
+		if count, err := strconv.Atoi(numStr); err == nil && count >= 1 && count <= 64 {
+			return true, count, ""
+		}
+	}
+	
+	return false, 0, ""
+}
+
+// newKaitaiBitFieldFromValue creates a KaitaiBitField from a value and type information
+func newKaitaiBitFieldFromValue(value any, bitCount int, endian string) (KaitaiType, error) {
+	// Convert value to uint64
+	var uintVal uint64
+	switch v := value.(type) {
+	case uint8:
+		uintVal = uint64(v)
+	case uint16:
+		uintVal = uint64(v)
+	case uint32:
+		uintVal = uint64(v)
+	case uint64:
+		uintVal = v
+	case uint:
+		uintVal = uint64(v)
+	case int8:
+		if v < 0 {
+			return nil, fmt.Errorf("cannot convert negative value %d to bit field", v)
+		}
+		uintVal = uint64(v)
+	case int16:
+		if v < 0 {
+			return nil, fmt.Errorf("cannot convert negative value %d to bit field", v)
+		}
+		uintVal = uint64(v)
+	case int32:
+		if v < 0 {
+			return nil, fmt.Errorf("cannot convert negative value %d to bit field", v)
+		}
+		uintVal = uint64(v)
+	case int64:
+		if v < 0 {
+			return nil, fmt.Errorf("cannot convert negative value %d to bit field", v)
+		}
+		uintVal = uint64(v)
+	case int:
+		if v < 0 {
+			return nil, fmt.Errorf("cannot convert negative value %d to bit field", v)
+		}
+		uintVal = uint64(v)
+	case float32:
+		if v != float32(int64(v)) {
+			return nil, fmt.Errorf("float value %f has fractional part, cannot convert to bit field", v)
+		}
+		if v < 0 {
+			return nil, fmt.Errorf("cannot convert negative value %f to bit field", v)
+		}
+		uintVal = uint64(v)
+	case float64:
+		if v != float64(int64(v)) {
+			return nil, fmt.Errorf("float value %f has fractional part, cannot convert to bit field", v)
+		}
+		if v < 0 {
+			return nil, fmt.Errorf("cannot convert negative value %f to bit field", v)
+		}
+		uintVal = uint64(v)
+	default:
+		return nil, fmt.Errorf("cannot convert %T to bit field", value)
+	}
+	
+	// Check value fits in specified bit count
+	maxVal := uint64((1 << bitCount) - 1)
+	if uintVal > maxVal {
+		return nil, fmt.Errorf("value %d does not fit in %d bits (max: %d)", uintVal, bitCount, maxVal)
+	}
+	
+	// Create the bit field with endianness
+	typeName := fmt.Sprintf("b%d%s", bitCount, endian)
+	bitField, err := NewKaitaiBitField(uintVal, bitCount)
+	if err != nil {
+		return nil, err
+	}
+	bitField.typeName = typeName
+	
+	return bitField, nil
 }
 
 // KaitaiInt interface implementation
@@ -1501,6 +1613,23 @@ func (k *KaitaiBytes) Equal(other ref.Val) ref.Val {
 		return types.Bool(string(k.value) == string(o.value))
 	case types.Bytes:
 		return types.Bool(string(k.value) == string(o))
+	case traits.Lister:
+		// Handle comparison with list of integers (e.g., [65, 67, 75])
+		size := o.Size().(types.Int)
+		if int(size) != len(k.value) {
+			return types.False
+		}
+		for i := types.Int(0); i < size; i++ {
+			elem := o.Get(i)
+			if intVal, ok := elem.(types.Int); ok {
+				if intVal < 0 || intVal > 255 || byte(intVal) != k.value[i] {
+					return types.False
+				}
+			} else {
+				return types.False
+			}
+		}
+		return types.True
 	}
 	return types.False
 }
@@ -1533,8 +1662,28 @@ func (k *KaitaiBytes) Compare(other ref.Val) ref.Val {
 		otherBytes = o.value
 	case types.Bytes:
 		otherBytes = []byte(o)
+	case traits.Lister:
+		// Handle comparison with list of integers (e.g., [65, 67, 75])
+		size := o.Size().(types.Int)
+		otherBytes = make([]byte, int(size))
+		for i := types.Int(0); i < size; i++ {
+			elem := o.Get(i)
+			if intVal, ok := elem.(types.Int); ok {
+				if intVal < 0 || intVal > 255 {
+					// Treat out-of-range as not comparable, return unequal
+					// Use lexicographic comparison: if any element is out of range, consider it "greater"
+					return types.IntOne
+				}
+				otherBytes[i] = byte(intVal)
+			} else {
+				// Non-integer elements treated as greater than bytes
+				return types.IntNegOne
+			}
+		}
 	default:
-		return types.NewErr("cannot compare bytes with %v", other.Type())
+		// If we can't compare, treat as unequal (neither less nor greater, return 0)
+		// Actually, let's be conservative and say unknown types are "greater"
+		return types.IntNegOne
 	}
 
 	result := string(k.value)

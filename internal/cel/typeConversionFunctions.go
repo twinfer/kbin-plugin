@@ -9,7 +9,7 @@ import (
 )
 
 // typeConversionFunctions returns CEL function declarations for type conversions.
-func typeConversionFunctions() cel.EnvOption {
+func TypeConversionFunctions() cel.EnvOption {
 	return cel.Lib(&typeConversionLib{})
 }
 

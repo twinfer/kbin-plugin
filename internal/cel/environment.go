@@ -6,35 +6,45 @@ import (
 	"github.com/google/cel-go/cel"
 	"github.com/google/cel-go/common/types"
 	"github.com/google/cel-go/common/types/ref"
+	"github.com/twinfer/kbin-plugin/pkg/kaitaicel"
 	exprpb "google.golang.org/genproto/googleapis/api/expr/v1alpha1"
 )
 
 // NewEnvironment creates a CEL environment with all Kaitai-specific functions.
 func NewEnvironment() (*cel.Env, error) {
-	// Create the CEL environment with standard library functions and Kaitai-specific functions
-	env, err := cel.NewEnv(
+	// Create base options
+	opts := []cel.EnvOption{
 		// Add custom type adapter to handle conversion between Go and CEL types
-		cel.CustomTypeAdapter(types.DefaultTypeAdapter),
+		cel.CustomTypeAdapter(NewKaitaiTypeAdapter()),
+
+		// Add custom type providers for stream access
+		cel.Variable("_io", cel.DynType),
 
 		// Enable standard CEL library functions
 		cel.StdLib(),
 
 		// Register Kaitai-specific functions organized by category
-		stringFunctions(),
-		typeConversionFunctions(),
-		arrayFunctions(),
-		// Removed sizeFunctions() to avoid conflict with stdlib
-		bitwiseFunctions(),
-		mathFunctions(),
-		kaitaiApiFunctions(), // New function category using direct Kaitai API calls
+		StringFunctions(),
+		TypeConversionFunctions(),
+		ArrayFunctions(),
+		SizeFunctions(),           // Re-added for _sizeof support
+		ByteComparisonFunctions(), // New functions for byte/int array comparisons
+		BitwiseFunctions(),
+		MathFunctions(),
+		KaitaiApiFunctions(), // New function category using direct Kaitai API calls
 		//processFunctions(),
-		errorHandlingFunctions(),
-		safeArithmeticFunctions(),
-		streamOperations(),  // New function category for stream operations
-		writerOperations(),  // New functions for serialization
-		encodingFunctions(), // New functions for string encoding
-		errorHandlingFunctions(),
-	)
+		ErrorHandlingFunctions(),
+		SafeArithmeticFunctions(),
+		StreamOperations(),  // New function category for stream operations
+		WriterOperations(),  // New functions for serialization
+		EncodingFunctions(), // New functions for string encoding
+	}
+
+	// Add kaitaicel bitfield type options
+	opts = append(opts, kaitaicel.BitFieldTypeOptions()...)
+
+	// Create the CEL environment with all options
+	env, err := cel.NewEnv(opts...)
 
 	if err != nil {
 		return nil, fmt.Errorf("failed to create CEL environment: %w", err)
@@ -43,118 +53,7 @@ func NewEnvironment() (*cel.Env, error) {
 	return env, nil
 }
 
-// sizeFunctions returns CEL function declarations for size operations (separate from stringFunctions).
-// func sizeFunctions() cel.EnvOption {
-// 	return cel.Lib(&sizeLib{})
-// }
-
-// type sizeLib struct{}
-
-// func (*sizeLib) CompileOptions() []cel.EnvOption {
-// 	return []cel.EnvOption{
-// 		// size function
-// 		cel.Function("size",
-// 			cel.Overload("size_string", []*cel.Type{cel.StringType}, cel.IntType,
-// 				cel.UnaryBinding(func(val ref.Val) ref.Val {
-// 					str, ok := val.(types.String)
-// 					if !ok {
-// 						return types.NewErr("expected string type for size")
-// 					}
-// 					return types.Int(len([]rune(string(str))))
-// 				}),
-// 			),
-// 			cel.Overload("size_bytes", []*cel.Type{cel.BytesType}, cel.IntType,
-// 				cel.UnaryBinding(func(val ref.Val) ref.Val {
-// 					b, ok := val.(types.Bytes)
-// 					if !ok {
-// 						return types.NewErr("expected bytes type for size")
-// 					}
-// 					return types.Int(len(b))
-// 				}),
-// 			),
-// 			cel.Overload("size_list", []*cel.Type{cel.ListType(cel.AnyType)}, cel.IntType,
-// 				cel.UnaryBinding(func(val ref.Val) ref.Val {
-// 					lister, ok := val.(traits.Lister)
-// 					if !ok {
-// 						return types.NewErr("expected list type for size")
-// 					}
-// 					size := lister.Size()
-// 					if intSize, ok := size.(types.Int); ok {
-// 						return intSize
-// 					}
-// 					return types.Int(size.Value().(int64))
-// 				}),
-// 			),
-// 			cel.Overload("size_map", []*cel.Type{cel.MapType(cel.AnyType, cel.AnyType)}, cel.IntType,
-// 				cel.UnaryBinding(func(val ref.Val) ref.Val {
-// 					mapper, ok := val.(traits.Mapper)
-// 					if !ok {
-// 						return types.NewErr("expected map type for size")
-// 					}
-// 					size := mapper.Size()
-// 					if intSize, ok := size.(types.Int); ok {
-// 						return intSize
-// 					}
-// 					return types.Int(size.Value().(int64))
-// 				}),
-// 			),
-// 		),
-
-// 		// count function (alias to size)
-// 		cel.Function("count",
-// 			cel.Overload("count_string", []*cel.Type{cel.StringType}, cel.IntType,
-// 				cel.UnaryBinding(func(val ref.Val) ref.Val {
-// 					str, ok := val.(types.String)
-// 					if !ok {
-// 						return types.NewErr("expected string type for count")
-// 					}
-// 					return types.Int(len([]rune(string(str))))
-// 				}),
-// 			),
-// 			cel.Overload("count_bytes", []*cel.Type{cel.BytesType}, cel.IntType,
-// 				cel.UnaryBinding(func(val ref.Val) ref.Val {
-// 					b, ok := val.(types.Bytes)
-// 					if !ok {
-// 						return types.NewErr("expected bytes type for count")
-// 					}
-// 					return types.Int(len(b))
-// 				}),
-// 			),
-// 			cel.Overload("count_list", []*cel.Type{cel.ListType(cel.AnyType)}, cel.IntType,
-// 				cel.UnaryBinding(func(val ref.Val) ref.Val {
-// 					lister, ok := val.(traits.Lister)
-// 					if !ok {
-// 						return types.NewErr("expected list type for count")
-// 					}
-// 					size := lister.Size()
-// 					if intSize, ok := size.(types.Int); ok {
-// 						return intSize
-// 					}
-// 					return types.Int(size.Value().(int64))
-// 				}),
-// 			),
-// 			cel.Overload("count_map", []*cel.Type{cel.MapType(cel.AnyType, cel.AnyType)}, cel.IntType,
-// 				cel.UnaryBinding(func(val ref.Val) ref.Val {
-// 					mapper, ok := val.(traits.Mapper)
-// 					if !ok {
-// 						return types.NewErr("expected map type for count")
-// 					}
-// 					size := mapper.Size()
-// 					if intSize, ok := size.(types.Int); ok {
-// 						return intSize
-// 					}
-// 					return types.Int(size.Value().(int64))
-// 				}),
-// 			),
-// 		),
-// 	}
-// }
-
-// func (*sizeLib) ProgramOptions() []cel.ProgramOption {
-// 	return []cel.ProgramOption{}
-// }
-
-func errorHandlingFunctions() cel.EnvOption {
+func ErrorHandlingFunctions() cel.EnvOption {
 	return cel.Lib(&errorLib{})
 }
 
@@ -185,6 +84,41 @@ func (*errorLib) CompileOptions() []cel.EnvOption {
 
 func (*errorLib) ProgramOptions() []cel.ProgramOption {
 	return []cel.ProgramOption{}
+}
+
+// KaitaiTypeAdapter extends the default type adapter to handle Go's smaller numeric types
+type KaitaiTypeAdapter struct {
+	types.Adapter
+}
+
+// NewKaitaiTypeAdapter creates a new type adapter that handles Kaitai-specific type conversions
+func NewKaitaiTypeAdapter() *KaitaiTypeAdapter {
+	return &KaitaiTypeAdapter{
+		Adapter: types.DefaultTypeAdapter,
+	}
+}
+
+// NativeToValue converts Go native types to CEL values, handling smaller integer types
+func (k *KaitaiTypeAdapter) NativeToValue(value any) ref.Val {
+	switch v := value.(type) {
+	case int8:
+		return types.Int(v)
+	case int16:
+		return types.Int(v)
+	case int32:
+		return types.Int(v)
+	case uint8:
+		return types.Int(v)
+	case uint16:
+		return types.Int(v)
+	case uint32:
+		return types.Uint(v)
+	case float32:
+		return types.Double(v)
+	default:
+		// Fall back to the default adapter for other types
+		return k.Adapter.NativeToValue(value)
+	}
 }
 
 // Functions for interacting with the CEL types and protobuf

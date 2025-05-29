@@ -38,6 +38,7 @@ type Visitor interface {
 	VisitAttr(*Attr) error
 	VisitCall(*Call) error
 	VisitArrayIdx(*ArrayIdx) error
+	VisitArrayLit(*ArrayLit) error
 	VisitCastToType(*CastToType) error
 	VisitSizeOf(*SizeOf) error
 	VisitAlignOf(*AlignOf) error
@@ -311,6 +312,21 @@ type ArrayIdx struct {
 func (ai *ArrayIdx) Pos() Pos               { return ai.P }
 func (ai *ArrayIdx) String() string         { return fmt.Sprintf("%s[%s]", ai.Value, ai.Idx) }
 func (ai *ArrayIdx) Accept(v Visitor) error { return v.VisitArrayIdx(ai) }
+
+type ArrayLit struct {
+	Elements []Expr // The array elements (e.g., [a, b, c])
+	P        Pos
+}
+
+func (al *ArrayLit) Pos() Pos { return al.P }
+func (al *ArrayLit) String() string {
+	var elements []string
+	for _, elem := range al.Elements {
+		elements = append(elements, elem.String())
+	}
+	return fmt.Sprintf("[%s]", strings.Join(elements, ", "))
+}
+func (al *ArrayLit) Accept(v Visitor) error { return v.VisitArrayLit(al) }
 
 // --- Type conversions / Built-ins ---
 

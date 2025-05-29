@@ -16,7 +16,7 @@ import (
 )
 
 // writerOperations returns CEL function declarations for Kaitai writer operations
-func writerOperations() cel.EnvOption {
+func WriterOperations() cel.EnvOption {
 	return cel.Lib(&writerLib{})
 }
 
@@ -399,8 +399,8 @@ func (*writerLib) ProgramOptions() []cel.ProgramOption {
 	return []cel.ProgramOption{}
 }
 
-// encodingFunctions returns CEL function declarations for string encoding/decoding
-func encodingFunctions() cel.EnvOption {
+// EncodingFunctions returns CEL function declarations for string encoding/decoding
+func EncodingFunctions() cel.EnvOption {
 	return cel.Lib(&encodingLib{})
 }
 

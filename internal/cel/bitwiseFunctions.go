@@ -4,10 +4,11 @@ import (
 	"github.com/google/cel-go/cel"
 	"github.com/google/cel-go/common/types"
 	"github.com/google/cel-go/common/types/ref"
+	"github.com/twinfer/kbin-plugin/pkg/kaitaicel"
 )
 
 // bitwiseFunctions returns CEL function declarations for bitwise operations.
-func bitwiseFunctions() cel.EnvOption {
+func BitwiseFunctions() cel.EnvOption {
 	return cel.Lib(&bitwiseLib{})
 }
 
@@ -26,6 +27,12 @@ func performBitwiseOp(lhs, rhs ref.Val, op func(uint64, uint64) uint64) ref.Val 
 	case types.Double: // Handle double by converting to uint64
 		l = uint64(lv) // Note: This truncates the fractional part
 		lOk = true
+	case *kaitaicel.KaitaiBitField:
+		l = lv.AsUint()
+		lOk = true
+	case *kaitaicel.KaitaiInt:
+		l = uint64(lv.Value().(int64))
+		lOk = true
 	}
 
 	switch rv := rhs.(type) {
@@ -38,10 +45,16 @@ func performBitwiseOp(lhs, rhs ref.Val, op func(uint64, uint64) uint64) ref.Val 
 	case types.Double: // Handle double by converting to uint64
 		r = uint64(rv) // Note: This truncates the fractional part
 		rOk = true
+	case *kaitaicel.KaitaiBitField:
+		r = rv.AsUint()
+		rOk = true
+	case *kaitaicel.KaitaiInt:
+		r = uint64(rv.Value().(int64))
+		rOk = true
 	}
 
 	if !lOk || !rOk {
-		return types.NewErr("bitwise arguments must be numeric (int, uint, double), got %T and %T", lhs.Value(), rhs.Value())
+		return types.NewErr("bitwise arguments must be numeric (int, uint, double, KaitaiBitField, KaitaiInt), got %T and %T", lhs.Value(), rhs.Value())
 	}
 
 	result := op(l, r)
@@ -113,6 +126,24 @@ func (*bitwiseLib) CompileOptions() []cel.EnvOption {
 					return types.Uint(left << uint(right))
 				}),
 			),
+			cel.Overload("bitshiftleft_kaitaibitfield_int", []*cel.Type{kaitaicel.KaitaiBitFieldType, cel.IntType}, cel.IntType,
+				cel.BinaryBinding(func(lhs, rhs ref.Val) ref.Val {
+					left, ok1 := lhs.(*kaitaicel.KaitaiBitField)
+					right, ok2 := rhs.(types.Int)
+					if !ok1 || !ok2 {
+						return types.NewErr("arguments to bitShiftLeft must be KaitaiBitField and int")
+					}
+					if right < 0 {
+						return types.NewErr("shift amount cannot be negative: %v", right)
+					}
+					result := left.AsUint() << uint(right)
+					// Return as Int if it fits, otherwise Uint
+					if result <= uint64(^uint64(0)>>1) {
+						return types.Int(result)
+					}
+					return types.Uint(result)
+				}),
+			),
 		),
 
 		// bitShiftRight
@@ -141,6 +172,24 @@ func (*bitwiseLib) CompileOptions() []cel.EnvOption {
 						return types.NewErr("shift amount cannot be negative: %v", right)
 					}
 					return types.Uint(left >> uint(right))
+				}),
+			),
+			cel.Overload("bitshiftright_kaitaibitfield_int", []*cel.Type{kaitaicel.KaitaiBitFieldType, cel.IntType}, cel.IntType,
+				cel.BinaryBinding(func(lhs, rhs ref.Val) ref.Val {
+					left, ok1 := lhs.(*kaitaicel.KaitaiBitField)
+					right, ok2 := rhs.(types.Int)
+					if !ok1 || !ok2 {
+						return types.NewErr("arguments to bitShiftRight must be KaitaiBitField and int")
+					}
+					if right < 0 {
+						return types.NewErr("shift amount cannot be negative: %v", right)
+					}
+					result := left.AsUint() >> uint(right)
+					// Return as Int if it fits, otherwise Uint
+					if result <= uint64(^uint64(0)>>1) {
+						return types.Int(result)
+					}
+					return types.Uint(result)
 				}),
 			),
 		),

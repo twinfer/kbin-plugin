@@ -2,6 +2,7 @@ package cel
 
 import (
 	"fmt"
+	"strconv"
 
 	"github.com/google/cel-go/cel"
 	"github.com/google/cel-go/common/types"
@@ -10,8 +11,8 @@ import (
 	"github.com/kaitai-io/kaitai_struct_go_runtime/kaitai"
 )
 
-// stringFunctions returns CEL function declarations for string operations.
-func stringFunctions() cel.EnvOption {
+// StringFunctions returns CEL function declarations for string operations.
+func StringFunctions() cel.EnvOption {
 	return cel.Lib(&stringLib{})
 }
 
@@ -24,6 +25,30 @@ func (*stringLib) CompileOptions() []cel.EnvOption {
 			cel.Overload("to_s_any", []*cel.Type{cel.AnyType}, cel.StringType,
 				cel.UnaryBinding(func(val ref.Val) ref.Val {
 					return types.String(fmt.Sprintf("%v", val.Value()))
+				}),
+			),
+			cel.Overload("to_s_any_encoding", []*cel.Type{cel.AnyType, cel.StringType}, cel.StringType,
+				cel.BinaryBinding(func(val, encoding ref.Val) ref.Val {
+					// For byte arrays, convert using specified encoding
+					switch v := val.(type) {
+					case types.String:
+						return v // Already a string
+					case types.Bytes:
+						// Convert CEL bytes directly to string
+						return types.String(string(v))
+					case traits.Lister:
+						// Convert list of integers to bytes then to string
+						var bytes []byte
+						for i := types.Int(0); i < v.Size().(types.Int); i++ {
+							elem := v.Get(types.Int(i))
+							if intVal, ok := elem.(types.Int); ok {
+								bytes = append(bytes, byte(intVal))
+							}
+						}
+						return types.String(string(bytes))
+					default:
+						return types.String(fmt.Sprintf("%v", val.Value()))
+					}
 				}),
 			),
 		),
@@ -88,9 +113,93 @@ func (*stringLib) CompileOptions() []cel.EnvOption {
 				}),
 			),
 		),
+		// substring function
+		cel.Function("substring",
+			cel.Overload("substring_string_int_int", []*cel.Type{cel.StringType, cel.IntType, cel.IntType}, cel.StringType,
+				cel.FunctionBinding(func(args ...ref.Val) ref.Val {
+					if len(args) != 3 {
+						return types.NewErr("substring requires exactly 3 arguments: string, start, end")
+					}
+
+					str, ok := args[0].(types.String)
+					if !ok {
+						return types.NewErr("first argument must be string")
+					}
+
+					start, ok := args[1].(types.Int)
+					if !ok {
+						return types.NewErr("start index must be integer")
+					}
+
+					end, ok := args[2].(types.Int)
+					if !ok {
+						return types.NewErr("end index must be integer")
+					}
+
+					runes := []rune(string(str))
+					startIdx := int(start)
+					endIdx := int(end)
+
+					// Handle bounds checking
+					if startIdx < 0 {
+						startIdx = 0
+					}
+					if endIdx > len(runes) {
+						endIdx = len(runes)
+					}
+					if startIdx >= endIdx || startIdx >= len(runes) {
+						return types.String("")
+					}
+
+					return types.String(string(runes[startIdx:endIdx]))
+				}),
+			),
+		),
+		// to_i function for string to integer conversion
+		cel.Function("to_i",
+			// to_i with default base 10
+			cel.Overload("to_i_string", []*cel.Type{cel.StringType}, cel.IntType,
+				cel.UnaryBinding(func(val ref.Val) ref.Val {
+					str, ok := val.(types.String)
+					if !ok {
+						return types.NewErr("expected string for to_i")
+					}
+					return stringToInt(string(str), 10)
+				}),
+			),
+			// to_i with specified base
+			cel.Overload("to_i_string_int", []*cel.Type{cel.StringType, cel.IntType}, cel.IntType,
+				cel.BinaryBinding(func(str, base ref.Val) ref.Val {
+					strVal, ok := str.(types.String)
+					if !ok {
+						return types.NewErr("first argument must be string")
+					}
+					baseVal, ok := base.(types.Int)
+					if !ok {
+						return types.NewErr("base must be integer")
+					}
+					return stringToInt(string(strVal), int(baseVal))
+				}),
+			),
+		),
 	}
 }
 
 func (*stringLib) ProgramOptions() []cel.ProgramOption {
 	return []cel.ProgramOption{}
+}
+
+// stringToInt converts a string to integer with the specified base
+func stringToInt(str string, base int) ref.Val {
+	// Handle different bases
+	if base < 2 || base > 36 {
+		return types.NewErr("base must be between 2 and 36")
+	}
+
+	result, err := strconv.ParseInt(str, base, 64)
+	if err != nil {
+		return types.NewErr("invalid integer format: %v", err)
+	}
+
+	return types.Int(result)
 }

@@ -18,7 +18,7 @@ func TestProcessStringBytes(t *testing.T) {
 			Type: "str",
 		}
 		input := []byte("hello world")
-		
+
 		result, err := k.processStringBytes(input, field)
 		require.NoError(t, err)
 		assert.Equal(t, []byte("hello world"), result)
@@ -32,7 +32,7 @@ func TestProcessStringBytes(t *testing.T) {
 			Terminator: 0x40, // '@'
 		}
 		input := []byte("hello@world")
-		
+
 		result, err := k.processStringBytes(input, field)
 		require.NoError(t, err)
 		assert.Equal(t, []byte("hello"), result, "should stop at terminator and exclude it")
@@ -47,7 +47,7 @@ func TestProcessStringBytes(t *testing.T) {
 			Include:    true,
 		}
 		input := []byte("hello@world")
-		
+
 		result, err := k.processStringBytes(input, field)
 		require.NoError(t, err)
 		assert.Equal(t, []byte("hello@"), result, "should stop at terminator and include it")
@@ -61,7 +61,7 @@ func TestProcessStringBytes(t *testing.T) {
 			Terminator: 0xFF, // not in data
 		}
 		input := []byte("hello world")
-		
+
 		result, err := k.processStringBytes(input, field)
 		require.NoError(t, err)
 		assert.Equal(t, []byte("hello world"), result, "should return full data when terminator not found")
@@ -75,7 +75,7 @@ func TestProcessStringBytes(t *testing.T) {
 			PadRight: 0x40, // '@'
 		}
 		input := []byte("hello@@@@@")
-		
+
 		result, err := k.processStringBytes(input, field)
 		require.NoError(t, err)
 		assert.Equal(t, []byte("hello"), result, "should remove trailing padding")
@@ -89,7 +89,7 @@ func TestProcessStringBytes(t *testing.T) {
 			PadRight: 0x2B, // '+'
 		}
 		input := []byte("a+b+c+++++")
-		
+
 		result, err := k.processStringBytes(input, field)
 		require.NoError(t, err)
 		assert.Equal(t, []byte("a+b+c"), result, "should only remove trailing padding")
@@ -104,7 +104,7 @@ func TestProcessStringBytes(t *testing.T) {
 			PadRight:   0x2B, // '+'
 		}
 		input := []byte("str+++3bar+++@++++++")
-		
+
 		result, err := k.processStringBytes(input, field)
 		require.NoError(t, err)
 		assert.Equal(t, []byte("str+++3bar+++"), result, "should stop at terminator, ignore padding after")
@@ -118,7 +118,7 @@ func TestProcessStringBytes(t *testing.T) {
 			Terminator: 0x00, // null
 		}
 		input := []byte("\x00hello")
-		
+
 		result, err := k.processStringBytes(input, field)
 		require.NoError(t, err)
 		assert.Equal(t, []byte(""), result, "should return empty string when terminator at start")
@@ -132,7 +132,7 @@ func TestProcessStringBytes(t *testing.T) {
 			PadRight: 0x20, // space
 		}
 		input := []byte("     ")
-		
+
 		result, err := k.processStringBytes(input, field)
 		require.NoError(t, err)
 		assert.Equal(t, []byte(""), result, "should return empty string when all padding")
@@ -146,7 +146,7 @@ func TestProcessStringBytes(t *testing.T) {
 			PadRight: 0x40,
 		}
 		input := []byte("")
-		
+
 		result, err := k.processStringBytes(input, field)
 		require.NoError(t, err)
 		assert.Equal(t, []byte(""), result, "should handle empty input")
@@ -158,15 +158,15 @@ func TestExtractByteValue(t *testing.T) {
 
 	t.Run("int_values", func(t *testing.T) {
 		testCases := []struct {
-			input    any
-			expected byte
+			input     any
+			expected  byte
 			shouldErr bool
 		}{
 			{64, 64, false},
 			{0, 0, false},
 			{255, 255, false},
-			{256, 0, true},  // out of range
-			{-1, 0, true},   // negative
+			{256, 0, true}, // out of range
+			{-1, 0, true},  // negative
 		}
 
 		for _, tc := range testCases {
@@ -210,10 +210,10 @@ func TestExtractByteValue(t *testing.T) {
 		}{
 			{float32(64.0), 64, false},
 			{float64(64.0), 64, false},
-			{float32(64.5), 0, true},   // fractional
-			{float64(64.7), 0, true},   // fractional
-			{float32(-1.0), 0, true},   // negative
-			{float64(256.0), 0, true},  // out of range
+			{float32(64.5), 0, true},  // fractional
+			{float64(64.7), 0, true},  // fractional
+			{float32(-1.0), 0, true},  // negative
+			{float64(256.0), 0, true}, // out of range
 		}
 
 		for _, tc := range testCases {
@@ -236,11 +236,11 @@ func TestExtractByteValue(t *testing.T) {
 			{"0x40", 64, false},
 			{"0x00", 0, false},
 			{"0xFF", 255, false},
-			{"0xff", 255, false},  // lowercase
-			{"0x100", 0, true},    // out of range
-			{"0xZZ", 0, true},     // invalid hex
-			{"40", 0, true},       // missing 0x prefix
-			{"not_hex", 0, true},  // not hex
+			{"0xff", 255, false}, // lowercase
+			{"0x100", 0, true},   // out of range
+			{"0xZZ", 0, true},    // invalid hex
+			{"40", 0, true},      // missing 0x prefix
+			{"not_hex", 0, true}, // not hex
 		}
 
 		for _, tc := range testCases {
@@ -292,7 +292,7 @@ func TestStringProcessingIntegration(t *testing.T) {
 				expected: []byte("str1"),
 			},
 			{
-				name: "str_term", 
+				name: "str_term",
 				field: SequenceItem{
 					ID:         "str_term",
 					Type:       "str",
@@ -329,7 +329,7 @@ func TestStringProcessingIntegration(t *testing.T) {
 			t.Run(tc.name, func(t *testing.T) {
 				result, err := k.processStringBytes(tc.input, tc.field)
 				require.NoError(t, err)
-				assert.Equal(t, tc.expected, result, 
+				assert.Equal(t, tc.expected, result,
 					"field %s should process correctly", tc.name)
 			})
 		}
@@ -346,7 +346,7 @@ func TestStringProcessingIntegration(t *testing.T) {
 				name: "multiple_terminators",
 				field: SequenceItem{
 					ID:         "test",
-					Type:       "str", 
+					Type:       "str",
 					Terminator: 0x7C, // '|'
 				},
 				input:    []byte("first|second|third"),

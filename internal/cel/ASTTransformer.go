@@ -108,9 +108,9 @@ func (t *ASTTransformer) VisitLiteral(node *expr.LiteralNode) error { // This me
 */
 
 func (t *ASTTransformer) VisitBinOp(node *expr.BinOp) error {
-	// For operators that map to CEL functions (e.g., bitwise operations)
+	// For operators that map to CEL functions (e.g., bitwise operations and modulo)
 	switch node.Op {
-	case expr.BinOpBitwiseAnd, expr.BinOpBitwiseOr, expr.BinOpBitwiseXor, expr.BinOpLShift, expr.BinOpRShift:
+	case expr.BinOpBitwiseAnd, expr.BinOpBitwiseOr, expr.BinOpBitwiseXor, expr.BinOpLShift, expr.BinOpRShift, expr.BinOpMod, expr.BinOpDiv:
 		celFuncName := ""
 		switch node.Op {
 		case expr.BinOpBitwiseAnd:
@@ -123,6 +123,10 @@ func (t *ASTTransformer) VisitBinOp(node *expr.BinOp) error {
 			celFuncName = "bitShiftLeft"
 		case expr.BinOpRShift:
 			celFuncName = "bitShiftRight"
+		case expr.BinOpMod:
+			celFuncName = "kaitai_mod" // Use Python-style modulo
+		case expr.BinOpDiv:
+			celFuncName = "kaitai_div" // Use Python-style floor division
 		}
 		t.sb.WriteString(celFuncName)
 		// Common structure for function calls
@@ -158,10 +162,6 @@ func (t *ASTTransformer) VisitBinOp(node *expr.BinOp) error {
 			operatorStr = " - "
 		case expr.BinOpMul: // Will handle numeric multiplication via cel.StdLib()
 			operatorStr = " * "
-		case expr.BinOpDiv:
-			operatorStr = " / "
-		case expr.BinOpMod:
-			operatorStr = " % "
 		case expr.BinOpEq:
 			operatorStr = " == "
 		case expr.BinOpNotEq:
@@ -224,41 +224,18 @@ func (t *ASTTransformer) VisitUnOp(node *expr.UnOp) error {
 }
 
 func (t *ASTTransformer) VisitAttr(node *expr.Attr) error {
-	// Handle common attributes that map to CEL functions
-	switch node.Name {
-	case "size", "length": // Treat .length as an alias for .size
-		t.sb.WriteString("size(")
-		err := node.Value.Accept(t) // receiver
-		if err != nil {
-			return err
-		}
-		t.sb.WriteString(")")
-		return nil
-	case "to_s":
-		t.sb.WriteString("to_s(")   // Call your custom "to_s" CEL function
-		err := node.Value.Accept(t) // The object to be converted to string
-		if err != nil {
-			return err
-		}
-		t.sb.WriteString(")")
-		return nil
-	}
-
-	// Handle _io attributes that are function calls in CEL without arguments,
-	// e.g., Kaitai `_io.pos` -> CEL `pos(_io)`
+	// Handle _io attributes first (before general cases)
+	// e.g., Kaitai `_io.pos` -> CEL `io_pos(_io)`
 	if ioNode, ok := node.Value.(*expr.Io); ok {
 		celFuncName := ""
 		isIoAttrFunc := false
 		switch node.Name {
 		case "pos":
-			celFuncName = "pos" // Maps to pos(_io)
+			celFuncName = "io_pos" // Maps to io_pos(_io)
 			isIoAttrFunc = true
-		// Note: _io.size is handled by the "size" case above, mapping to size(_io) if that's intended.
-		// If _io.size specifically means stream_size, it might need explicit handling here.
-		// For now, assuming general "size" mapping is sufficient for _io.size as well.
-		// case "size":
-		// 	celFuncName = "stream_size" // Maps to stream_size(_io)
-		// 	isIoAttrFunc = true
+		case "size":
+			celFuncName = "io_size" // Maps to io_size(_io)
+			isIoAttrFunc = true
 		case "eof", "is_eof":
 			celFuncName = "isEOF" // Maps to isEOF(_io)
 			isIoAttrFunc = true
@@ -279,6 +256,117 @@ func (t *ASTTransformer) VisitAttr(node *expr.Attr) error {
 		// or a direct field access on a hypothetical _io user type (less common).
 		// For direct field access on _io (e.g., _io.some_custom_field if _io were a map/object),
 		// the generic attribute access below would apply.
+	}
+
+	// Handle common attributes that map to CEL functions (after _io handling)
+	switch node.Name {
+	case "length": // .length always uses the size() function
+		t.sb.WriteString("size(")
+		err := node.Value.Accept(t) // receiver
+		if err != nil {
+			return err
+		}
+		t.sb.WriteString(")")
+		return nil
+	case "size":
+		// Handle .size based on context:
+		// - For _io or expressions that end with ._io: use property access
+		// - For everything else: use size() function
+		isIoContext := false
+
+		// Check if this is direct _io access
+		if _, isDirectIo := node.Value.(*expr.Io); isDirectIo {
+			isIoContext = true
+		} else if attr, isAttr := node.Value.(*expr.Attr); isAttr && attr.Name == "_io" {
+			// Check for patterns like obj._io.size
+			isIoContext = true
+		} else if id, isId := node.Value.(*expr.Id); isId && strings.Contains(id.Name, "_io") {
+			// Check for variables that contain "_io" in their name
+			isIoContext = true
+		}
+
+		if isIoContext {
+			// For _io contexts, use property access
+			err := node.Value.Accept(t)
+			if err != nil {
+				return err
+			}
+			t.sb.WriteString(".size")
+			return nil
+		} else {
+			// For arrays/other contexts, use size() function
+			t.sb.WriteString("size(")
+			err := node.Value.Accept(t)
+			if err != nil {
+				return err
+			}
+			t.sb.WriteString(")")
+			return nil
+		}
+	case "to_s":
+		t.sb.WriteString("to_s(")   // Call your custom "to_s" CEL function
+		err := node.Value.Accept(t) // The object to be converted to string
+		if err != nil {
+			return err
+		}
+		t.sb.WriteString(")")
+		return nil
+	case "first":
+		t.sb.WriteString("array_first(") // Map to array_first() function
+		err := node.Value.Accept(t)
+		if err != nil {
+			return err
+		}
+		t.sb.WriteString(")")
+		return nil
+	case "last":
+		t.sb.WriteString("array_last(") // Map to array_last() function
+		err := node.Value.Accept(t)
+		if err != nil {
+			return err
+		}
+		t.sb.WriteString(")")
+		return nil
+	case "min":
+		t.sb.WriteString("array_min(") // Map to array_min() function
+		err := node.Value.Accept(t)
+		if err != nil {
+			return err
+		}
+		t.sb.WriteString(")")
+		return nil
+	case "max":
+		t.sb.WriteString("array_max(") // Map to array_max() function
+		err := node.Value.Accept(t)
+		if err != nil {
+			return err
+		}
+		t.sb.WriteString(")")
+		return nil
+	case "_sizeof":
+		t.sb.WriteString("sizeof_value(") // Map to sizeof_value() function
+		err := node.Value.Accept(t)
+		if err != nil {
+			return err
+		}
+		t.sb.WriteString(")")
+		return nil
+	case "reverse":
+		t.sb.WriteString("reverse(") // Map to reverse() function
+		err := node.Value.Accept(t)
+		if err != nil {
+			return err
+		}
+		t.sb.WriteString(")")
+		return nil
+	case "to_i":
+		t.sb.WriteString("to_i(") // Map to to_i() function with default base 10
+		err := node.Value.Accept(t)
+		if err != nil {
+			return err
+		}
+		t.sb.WriteString(")")
+		return nil
 	}
 
 	// Generic attribute access: receiver.name
@@ -310,6 +398,22 @@ func (t *ASTTransformer) VisitArrayIdx(node *expr.ArrayIdx) error {
 	}
 
 	t.sb.WriteString(")")
+	return nil
+}
+
+func (t *ASTTransformer) VisitArrayLit(node *expr.ArrayLit) error {
+	// Convert Kaitai array literal to CEL list literal
+	t.sb.WriteString("[")
+	for i, element := range node.Elements {
+		if i > 0 {
+			t.sb.WriteString(", ")
+		}
+		err := element.Accept(t)
+		if err != nil {
+			return err
+		}
+	}
+	t.sb.WriteString("]")
 	return nil
 }
 
@@ -441,8 +545,32 @@ func (t *ASTTransformer) VisitCastToType(node *expr.CastToType) error {
 }
 
 func (t *ASTTransformer) VisitSizeOf(node *expr.SizeOf) error {
-	return fmt.Errorf("sizeof not directly supported in CEL transformation")
-} // Or map to a function if possible
+	// Transform sizeof<type> into sizeof_type("type")
+	t.sb.WriteString("sizeof_type(\"")
+
+	// Extract type name from the Value expression
+	switch v := node.Value.(type) {
+	case *expr.Id:
+		// Simple identifier: sizeof<u1> -> sizeof_type("u1")
+		t.sb.WriteString(v.Name)
+	case *expr.StrLit:
+		// String literal: sizeof<"custom_type"> -> sizeof_type("custom_type")
+		t.sb.WriteString(v.Value)
+	default:
+		// For other expressions, try to render them as a string
+		// This might not work for all cases but is a fallback
+		tempSB := strings.Builder{}
+		tempTransformer := &ASTTransformer{sb: tempSB}
+		err := node.Value.Accept(tempTransformer)
+		if err != nil {
+			return fmt.Errorf("unsupported sizeof value type %T: %w", node.Value, err)
+		}
+		t.sb.WriteString(tempSB.String())
+	}
+
+	t.sb.WriteString("\")")
+	return nil
+}
 func (t *ASTTransformer) VisitAlignOf(node *expr.AlignOf) error {
 	return fmt.Errorf("alignof not directly supported in CEL transformation")
 } // Or map to a function if possible
@@ -464,11 +592,14 @@ func mapKaitaiTypeToCELConversion(kaitaiTypeName string) (string, bool) {
 // Helper function to map Kaitai function names to CEL function names
 func mapKaitaiFunctionToCEL(kaitaiFuncName string) (string, bool) {
 	mapping := map[string]string{
-		"bytes2str": "bytesToStr", // bytes2str(input)
-		"reverse":   "reverse",    // reverse(input)
-		"size":      "size",       // size(input)
-		"pos":       "pos",        // pos(_io)
-		"eof":       "isEOF",      // isEOF(_io)
+		"bytes2str": "bytesToStr",  // bytes2str(input)
+		"reverse":   "reverse",     // reverse(input)
+		"size":      "size",        // size(input)
+		"pos":       "pos",         // pos(_io)
+		"eof":       "isEOF",       // isEOF(_io)
+		"sizeof":    "sizeof_type", // sizeof<type> -> sizeof_type("type")
+		"substring": "substring",   // substring(str, start, end)
+		"to_i":      "to_i",        // to_i(str, base)
 		"abs":       "abs",
 		"min":       "min",
 		"max":       "max",

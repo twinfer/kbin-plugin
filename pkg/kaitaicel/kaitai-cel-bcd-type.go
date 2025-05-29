@@ -225,9 +225,6 @@ func (b *BcdType) Compare(other ref.Val) ref.Val {
 // BcdTypeOptions provides CEL options for BCD type
 func BcdTypeOptions() []cel.EnvOption {
 	return []cel.EnvOption{
-		// Register BCD type
-		cel.Types(&BcdType{}),
-
 		// Constructor functions
 		cel.Function("bcd",
 			cel.Overload("bcd_bytes_string",
@@ -289,29 +286,31 @@ func BcdTypeOptions() []cel.EnvOption {
 		),
 
 		// Comparison operations
-		cel.Function("_==_",
-			cel.Overload("eq_bcd_int",
-				[]*cel.Type{KaitaiBcdType, cel.IntType},
-				cel.BoolType,
-				cel.BinaryBinding(func(lhs, rhs ref.Val) ref.Val {
-					return lhs.(*BcdType).Equal(rhs)
-				}),
-			),
-			cel.Overload("eq_bcd_string",
-				[]*cel.Type{KaitaiBcdType, cel.StringType},
-				cel.BoolType,
-				cel.BinaryBinding(func(lhs, rhs ref.Val) ref.Val {
-					return lhs.(*BcdType).Equal(rhs)
-				}),
-			),
-			cel.Overload("eq_bcd_bcd",
-				[]*cel.Type{KaitaiBcdType, KaitaiBcdType},
-				cel.BoolType,
-				cel.BinaryBinding(func(lhs, rhs ref.Val) ref.Val {
-					return lhs.(*BcdType).Equal(rhs)
-				}),
-			),
-		),
+		// Note: Commented out to avoid collision with standard CEL equality
+		// BcdType implements Equal method which CEL will use automatically
+		// cel.Function("_==_",
+		// 	cel.Overload("eq_bcd_int",
+		// 		[]*cel.Type{KaitaiBcdType, cel.IntType},
+		// 		cel.BoolType,
+		// 		cel.BinaryBinding(func(lhs, rhs ref.Val) ref.Val {
+		// 			return lhs.(*BcdType).Equal(rhs)
+		// 		}),
+		// 	),
+		// 	cel.Overload("eq_bcd_string",
+		// 		[]*cel.Type{KaitaiBcdType, cel.StringType},
+		// 		cel.BoolType,
+		// 		cel.BinaryBinding(func(lhs, rhs ref.Val) ref.Val {
+		// 			return lhs.(*BcdType).Equal(rhs)
+		// 		}),
+		// 	),
+		// 	cel.Overload("eq_bcd_bcd",
+		// 		[]*cel.Type{KaitaiBcdType, KaitaiBcdType},
+		// 		cel.BoolType,
+		// 		cel.BinaryBinding(func(lhs, rhs ref.Val) ref.Val {
+		// 			return lhs.(*BcdType).Equal(rhs)
+		// 		}),
+		// 	),
+		// ),
 
 		cel.Function("_<_",
 			cel.Overload("less_bcd_int",

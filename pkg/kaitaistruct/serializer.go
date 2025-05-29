@@ -20,7 +20,6 @@ import (
 type KaitaiSerializer struct {
 	schema          *KaitaiSchema
 	expressionPool  *internalCel.ExpressionPool
-	processRegistry *ProcessRegistry
 	typeStack       []string // Stack of type names being processed for hierarchical resolution
 	logger          *slog.Logger
 }
@@ -49,7 +48,6 @@ func NewKaitaiSerializer(schema *KaitaiSchema, logger *slog.Logger) (*KaitaiSeri
 	return &KaitaiSerializer{
 		schema:          schema,
 		expressionPool:  pool,
-		processRegistry: NewProcessRegistry(),
 		logger:          log,
 	}, nil
 }
@@ -130,8 +128,27 @@ func (k *KaitaiSerializer) serializeType(goCtx context.Context, typeName string,
 		if !ok {
 			return fmt.Errorf("expected map for root type, got %T", data)
 		}
+		
+		// Create context for the root type
+		fieldCtx := &SerializeContext{
+			Value:    dataMap,
+			Children: dataMap,
+			Writer:   sCtx.Writer,
+			Parent:   sCtx,
+			Root:     sCtx.Root,
+		}
+		
+		// Pre-evaluate root-level instances
+		if k.schema.Instances != nil {
+			k.logger.DebugContext(goCtx, "Pre-evaluating root-level instances", "instance_count", len(k.schema.Instances))
+			err := k.evaluateInstancesWithDependencies(goCtx, k.schema.Instances, fieldCtx)
+			if err != nil {
+				k.logger.WarnContext(goCtx, "Some root-level instances could not be evaluated due to dependencies", "error", err)
+			}
+		}
+		
 		// Use helper to serialize sequence
-		return k.serializeSequence(goCtx, typeName, k.schema.Seq, dataMap, sCtx)
+		return k.serializeSequence(goCtx, typeName, k.schema.Seq, dataMap, fieldCtx)
 	}
 
 	// Check if it's a built-in type (only for primitive type names)
@@ -178,20 +195,9 @@ func (k *KaitaiSerializer) serializeType(goCtx context.Context, typeName string,
 	// This makes them available for expressions in seq items (if, size, repeat-expr, etc.)
 	if typeObj.Instances != nil {
 		k.logger.DebugContext(goCtx, "Pre-evaluating instances for type", "type_name", typeName, "instance_count", len(typeObj.Instances))
-		for instName, instDef := range typeObj.Instances {
-			// Ensure that the activation for instance evaluation uses the current fieldCtx,
-			// which already contains the dataMap (input fields for this type).
-			instValue, err := k.evaluateExpression(goCtx, instDef.Value, fieldCtx)
-			if err != nil {
-				// It's possible an instance depends on another instance not yet evaluated.
-				// A full solution requires topological sort of instances.
-				// For now, log a warning and continue; subsequent expressions might fail.
-				k.logger.WarnContext(goCtx, "Failed to pre-evaluate instance, it might depend on another instance or be complex", "type_name", typeName, "instance_name", instName, "error", err)
-				// Do not add to children if evaluation failed, to prevent CEL errors with nil/error values.
-			} else {
-				fieldCtx.Children[instName] = instValue
-				k.logger.DebugContext(goCtx, "Pre-evaluated instance and added to context", "type_name", typeName, "instance_name", instName, "value", instValue)
-			}
+		err := k.evaluateInstancesWithDependencies(goCtx, typeObj.Instances, fieldCtx)
+		if err != nil {
+			k.logger.WarnContext(goCtx, "Some instances could not be evaluated due to dependencies", "type_name", typeName, "error", err)
 		}
 	}
 
@@ -381,9 +387,19 @@ func (k *KaitaiSerializer) serializeField(goCtx context.Context, field SequenceI
 		return k.serializeRepeatedField(goCtx, field, data, sCtx)
 	}
 
+	// Handle enum fields - extract numeric value from enum object
+	if field.Enum != "" {
+		return k.serializeEnumField(goCtx, field, data, sCtx)
+	}
+
 	// Handle contents attribute
 	if field.Contents != nil {
 		return k.serializeContentsField(goCtx, field, sCtx)
+	}
+
+	// Handle process first (before type-specific handling)
+	if field.Process != "" {
+		return k.serializeProcessedField(goCtx, field, data, sCtx)
 	}
 
 	// Handle string and bytes fields
@@ -393,11 +409,6 @@ func (k *KaitaiSerializer) serializeField(goCtx context.Context, field SequenceI
 
 	if field.Type == "bytes" {
 		return k.serializeBytesField(goCtx, field, data, sCtx)
-	}
-
-	// Handle process
-	if field.Process != "" {
-		return k.serializeProcessedField(goCtx, field, data, sCtx)
 	}
 
 	// Explicitly handle fields defined with type: switch
@@ -422,7 +433,7 @@ func (k *KaitaiSerializer) serializeField(goCtx context.Context, field SequenceI
 	k.logger.DebugContext(goCtx, "Recursively serializing field's defined type", "field_id", field.ID, "defined_type", field.Type)
 
 	// Default: serialize as a type
-	return k.serializeType(goCtx, field.Type, data, sCtx)
+	return k.serializeType(goCtx, getTypeAsString(field.Type), data, sCtx)
 }
 
 // serializeRepeatedField handles serialization of repeated fields
@@ -437,6 +448,7 @@ func (k *KaitaiSerializer) serializeRepeatedField(goCtx context.Context, field S
 	var expectedCount int
 	if field.RepeatExpr != "" {
 		// Evaluate repeat expression
+		k.logger.DebugContext(goCtx, "Evaluating repeat expression", "field_id", field.ID, "expr", field.RepeatExpr, "available_vars", fmt.Sprintf("%v", maps.Keys(sCtx.Children)))
 		result, err := k.evaluateExpression(goCtx, field.RepeatExpr, sCtx)
 		if err != nil {
 			return fmt.Errorf("evaluating repeat expression for field '%s' ('%s'): %w", field.ID, field.RepeatExpr, err)
@@ -775,15 +787,20 @@ func (k *KaitaiSerializer) reverseProcess(goCtx context.Context, data []byte, pr
 	default:
 	}
 
-	// Parse the process spec (e.g., "xor(0x5F)")
-	// This parsing is simple; more complex specs might need a proper parser.
-	parts := strings.Split(processSpec, "(")
-	if len(parts) != 2 {
-		return nil, fmt.Errorf("invalid process specification: %s", processSpec)
+	// Parse the process spec (e.g., "xor(0x5F)" or "zlib")
+	var processFn, paramStr string
+	if strings.Contains(processSpec, "(") {
+		parts := strings.Split(processSpec, "(")
+		if len(parts) != 2 {
+			return nil, fmt.Errorf("invalid process specification format: '%s'", processSpec)
+		}
+		processFn = parts[0]
+		paramStr = strings.TrimRight(parts[1], ")")
+	} else {
+		// No parentheses - just the function name
+		processFn = processSpec
+		paramStr = ""
 	}
-
-	processFn := parts[0]
-	paramStr := strings.TrimRight(parts[1], ")")
 
 	// Create CEL expression for reverse process
 	var expr string
@@ -793,14 +810,13 @@ func (k *KaitaiSerializer) reverseProcess(goCtx context.Context, data []byte, pr
 		expr = fmt.Sprintf("processXOR(data, %s)", paramStr)
 	case "zlib":
 		// For serialization, if stored data is zlib-decompressed, we need to zlib-compress.
-		// Assuming a CEL function `processZlibCompress(data)` exists.
-		expr = "processZlibCompress(data)" // Placeholder: ensure this CEL function exists
-		k.logger.WarnContext(goCtx, "Zlib reverse process (compression) relies on 'processZlibCompress' CEL function", "process_spec", processSpec)
-		// If no such function, this will fail at GetExpression or EvaluateExpression.
-		// return nil, fmt.Errorf("zlib compression (reverse process) not fully implemented for serialization via CEL yet")
-	case "rotate":
-		// If original process is rotate_left(N), reverse is rotate_right(N) or rotate_left(-N).
+		expr = "processZlibCompress(data)"
+	case "rotate", "rol":
+		// If original process is rotate_left(N), reverse is rotate_right(N)
 		expr = fmt.Sprintf("processRotateRight(data, %s)", paramStr)
+	case "ror":
+		// If original process is rotate_right(N), reverse is rotate_left(N)
+		expr = fmt.Sprintf("processRotateLeft(data, %s)", paramStr)
 	default:
 		return nil, fmt.Errorf("unknown process function for reverse: %s", processFn)
 	}
@@ -812,15 +828,21 @@ func (k *KaitaiSerializer) reverseProcess(goCtx context.Context, data []byte, pr
 		return nil, fmt.Errorf("compiling reverse process expression '%s': %w", expr, err)
 	}
 
-	// Create activation. Note: sCtx here is the context of the field *being processed*,
-	// which might be different from the context where the process parameters (like XOR key) are defined.
-	// If process parameters depend on other fields, sCtx should be the parent context of the field.
-	// For now, assuming process parameters are literals or simple.
+	// Create a complete activation map similar to what the parser does
+	evalMap := make(map[string]any)
+	if sCtx.Children != nil {
+		maps.Copy(evalMap, sCtx.Children)
+	}
+	if sCtx.Parent != nil {
+		evalMap["_parent"] = sCtx.Parent.Children // Expose parent's children map
+	}
+	if sCtx.Root != nil {
+		evalMap["_root"] = sCtx.Root.Children // Expose root's children map
+	}
+	// Note: _io is not available in serialization context
+	evalMap["data"] = data // Add the data to be processed as 'data'
 
-	result, err := k.expressionPool.EvaluateExpression(program, map[string]any{
-		"data": data,
-		// Potentially add other variables from sCtx if paramStr could be an expression
-	})
+	result, err := k.expressionPool.EvaluateExpression(program, evalMap)
 	if err != nil {
 		return nil, fmt.Errorf("evaluating reverse process expression '%s': %w", expr, err)
 	}
@@ -834,8 +856,64 @@ func (k *KaitaiSerializer) reverseProcess(goCtx context.Context, data []byte, pr
 	return nil, fmt.Errorf("reverse process expression '%s' result is not bytes: %T", expr, result)
 }
 
+// evaluateInstancesWithDependencies evaluates instances using multi-pass approach like the parser
+func (k *KaitaiSerializer) evaluateInstancesWithDependencies(goCtx context.Context, instances map[string]InstanceDef, sCtx *SerializeContext) error {
+	if len(instances) == 0 {
+		return nil
+	}
+	
+	instancesToProcess := make(map[string]InstanceDef)
+	maps.Copy(instancesToProcess, instances)
+	
+	maxPasses := len(instancesToProcess) + 2 // Allow a couple of extra passes for dependencies
+	processedInLastPass := -1
+	
+	for pass := 0; pass < maxPasses && len(instancesToProcess) > 0 && processedInLastPass != 0; pass++ {
+		k.logger.DebugContext(goCtx, "Instance evaluation pass", "pass_num", pass+1, "remaining_instances", len(instancesToProcess))
+		processedInThisPass := 0
+		successfullyProcessedThisPass := make(map[string]bool)
+		
+		for name, inst := range instancesToProcess {
+			k.logger.DebugContext(goCtx, "Attempting to evaluate instance", "instance_name", name, "pass", pass+1, "available_variables", fmt.Sprintf("%v", maps.Keys(sCtx.Children)), "instance_expr", inst.Value)
+			
+			val, err := k.evaluateExpression(goCtx, inst.Value, sCtx)
+			if err != nil {
+				k.logger.DebugContext(goCtx, "Instance evaluation attempt failed (may retry)", "instance_name", name, "pass", pass+1, "error", err)
+			} else {
+				k.logger.DebugContext(goCtx, "Instance evaluated successfully", "instance_name", name, "value", val)
+				sCtx.Children[name] = val
+				successfullyProcessedThisPass[name] = true
+				processedInThisPass++
+			}
+		}
+		
+		// Remove successfully processed instances
+		for name := range successfullyProcessedThisPass {
+			delete(instancesToProcess, name)
+		}
+		processedInLastPass = processedInThisPass
+	}
+	
+	if len(instancesToProcess) > 0 {
+		remainingInstanceNames := make([]string, 0, len(instancesToProcess))
+		for name := range instancesToProcess {
+			remainingInstanceNames = append(remainingInstanceNames, name)
+		}
+		return fmt.Errorf("failed to evaluate all instances after %d passes; remaining: %v. Check for circular dependencies or unresolvable expressions", maxPasses-1, strings.Join(remainingInstanceNames, ", "))
+	}
+	
+	return nil
+}
+
+
+
 // evaluateExpression evaluates a Kaitai expression using CEL
 func (k *KaitaiSerializer) evaluateExpression(goCtx context.Context, kaitaiExpr string, sCtx *SerializeContext) (any, error) {
+	return k.evaluateExpressionWithGuard(goCtx, kaitaiExpr, sCtx, make(map[string]bool))
+}
+
+// evaluateExpressionWithGuard evaluates a Kaitai expression with recursion guard
+func (k *KaitaiSerializer) evaluateExpressionWithGuard(goCtx context.Context, kaitaiExpr string, sCtx *SerializeContext, evaluating map[string]bool) (any, error) {
 	k.logger.DebugContext(goCtx, "Evaluating CEL expression for serialization", "kaitai_expr", kaitaiExpr)
 	select {
 	case <-goCtx.Done():
@@ -857,6 +935,49 @@ func (k *KaitaiSerializer) evaluateExpression(goCtx context.Context, kaitaiExpr 
 	// Evaluate expression
 	result, _, err := program.Eval(activation)
 	if err != nil {
+		// Check if this is a "no such attribute" error that might be resolved by evaluating an instance on-demand
+		errStr := err.Error()
+		if strings.Contains(errStr, "no such attribute(s):") {
+			// Extract the missing attribute name from the error
+			// Error format: "no such attribute(s): attr_name"
+			parts := strings.Split(errStr, "no such attribute(s): ")
+			if len(parts) > 1 {
+				missingAttr := strings.TrimSpace(parts[1])
+				k.logger.DebugContext(goCtx, "Attempting on-demand instance evaluation", "missing_attr", missingAttr, "kaitai_expr", kaitaiExpr)
+				
+				// Check root-level instances first
+				if k.schema.Instances != nil {
+					if inst, exists := k.schema.Instances[missingAttr]; exists {
+						// Check if we're already evaluating this instance to prevent recursion
+						if !evaluating[missingAttr] {
+							evaluating[missingAttr] = true
+							instanceResult, instanceErr := k.evaluateExpressionWithGuard(goCtx, inst.Value, sCtx, evaluating)
+							delete(evaluating, missingAttr)
+							
+							if instanceErr == nil {
+								k.logger.DebugContext(goCtx, "Successfully evaluated root instance on-demand", "instance_name", missingAttr, "value", instanceResult)
+								sCtx.Children[missingAttr] = instanceResult
+								
+								// Recreate activation with the new instance and retry
+								activation, activationErr := sCtx.AsActivation()
+								if activationErr == nil {
+									retryResult, _, retryErr := program.Eval(activation)
+									if retryErr == nil {
+										k.logger.DebugContext(goCtx, "CEL expression evaluated successfully after on-demand instance", "kaitai_expr", kaitaiExpr, "result", retryResult.Value())
+										return retryResult.Value(), nil
+									}
+								}
+							} else {
+								k.logger.DebugContext(goCtx, "Failed to evaluate root instance on-demand", "instance_name", missingAttr, "error", instanceErr)
+							}
+						} else {
+							k.logger.DebugContext(goCtx, "Skipping on-demand instance due to recursion guard", "instance_name", missingAttr, "kaitai_expr", kaitaiExpr)
+						}
+					}
+				}
+			}
+		}
+		
 		return nil, fmt.Errorf("evaluating expression '%s': %w", kaitaiExpr, err)
 	}
 	k.logger.DebugContext(goCtx, "CEL expression evaluated successfully for serialization", "kaitai_expr", kaitaiExpr, "result", result.Value(), "result_type", fmt.Sprintf("%T", result.Value()))
@@ -961,21 +1082,39 @@ func (k *KaitaiSerializer) resolveTypeInHierarchy(typeName string) (*Type, bool)
 	return nil, false
 }
 
-// Type conversion helpers
-func toUint8(data any) (byte, error) {
+// serializeEnumField handles serialization of enum fields
+func (k *KaitaiSerializer) serializeEnumField(goCtx context.Context, field SequenceItem, data any, sCtx *SerializeContext) error {
+	k.logger.DebugContext(goCtx, "Serializing enum field", "field_id", field.ID, "enum_name", field.Enum, "field_type", field.Type)
+	
+	// Handle different enum data formats
+	var enumValue any
+	
 	switch v := data.(type) {
-	case uint8:
-		return v, nil
-	case int:
-		return byte(v), nil
-	case int64:
-		return byte(v), nil
-	case float64:
-		return byte(v), nil
+	case map[string]any:
+		// Enum object format: {"name": "cat", "value": 4, "valid": true}
+		if val, exists := v["value"]; exists {
+			enumValue = val
+			k.logger.DebugContext(goCtx, "Extracted enum value from object", "field_id", field.ID, "enum_value", enumValue)
+		} else {
+			return fmt.Errorf("enum object for field '%s' missing 'value' field", field.ID)
+		}
+	case int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64:
+		// Direct numeric value
+		enumValue = v
+		k.logger.DebugContext(goCtx, "Using direct numeric value for enum", "field_id", field.ID, "enum_value", enumValue)
+	case float32, float64:
+		// Float that should be an integer
+		enumValue = v
+		k.logger.DebugContext(goCtx, "Using numeric value for enum", "field_id", field.ID, "enum_value", enumValue)
 	default:
-		return 0, fmt.Errorf("cannot convert %T to uint8", data)
+		return fmt.Errorf("unsupported enum data format for field '%s': %T", field.ID, data)
 	}
+	
+	// Now serialize the numeric value using the field's base type
+	return k.serializeType(goCtx, getTypeAsString(field.Type), enumValue, sCtx)
 }
+
+// Type conversion helpers
 
 // getWriterBuffer accesses the buffer from a kaitai.Writer
 func getWriterBuffer(writer *kaitai.Writer) ([]byte, error) {

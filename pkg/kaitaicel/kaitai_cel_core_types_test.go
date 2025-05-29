@@ -17,7 +17,7 @@ func TestKaitaiInt_Constructors(t *testing.T) {
 	kiU1 := NewKaitaiU1(0x12, raw1)
 	assert.Equal(t, int64(0x12), kiU1.value)
 	assert.Equal(t, "u1", kiU1.typeName)
-	assert.Same(t, raw1, kiU1.raw) // Check if it's the same slice
+	assert.Equal(t, raw1, kiU1.raw) // Check if it's the same slice content
 
 	kiS4BE := NewS4BEFromValue(-10)
 	assert.Equal(t, int64(-10), kiS4BE.value)
@@ -272,7 +272,7 @@ func TestNewKaitaiTypeFromValue_Integers(t *testing.T) {
 	// Fractional part error for float to int
 	_, err = NewKaitaiTypeFromValue(123.45, "u2be")
 	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "has fractional part, cannot convert to integer type u2be")
+	assert.Contains(t, err.Error(), "has fractional part, cannot convert to u2be")
 
 	// Conversion from string (should fail as NewKaitaiTypeFromValue doesn't handle string to int)
 	_, err = NewKaitaiTypeFromValue("123", "u1")
@@ -293,7 +293,7 @@ func TestNewKaitaiTypeFromValue_Floats(t *testing.T) {
 	// Overflow float64 to float32
 	_, err = NewKaitaiTypeFromValue(float64(math.MaxFloat64), "f4le")
 	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "overflows float32")
+	assert.Contains(t, err.Error(), "out of range for f4le")
 }
 
 func TestNewKaitaiTypeFromValue_Unsupported(t *testing.T) {

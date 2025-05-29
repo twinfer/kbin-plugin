@@ -15,9 +15,106 @@ import (
 	"github.com/redpanda-data/benthos/v4/public/service"
 	kcel "github.com/twinfer/kbin-plugin/pkg/kaitaicel" // Import the kaitaicel package
 	kst "github.com/twinfer/kbin-plugin/pkg/kaitaistruct"
-	"github.com/twinfer/kbin-plugin/testutil"
 	"gopkg.in/yaml.v3"
 )
+
+// benthosLogHandler wraps a Benthos logger to implement slog.Handler
+type benthosLogHandler struct {
+	logger *service.Logger
+	attrs  []slog.Attr
+	groups []string
+}
+
+// newBenthosLogHandler creates a new slog handler that forwards logs to Benthos
+func newBenthosLogHandler(logger *service.Logger) slog.Handler {
+	return &benthosLogHandler{
+		logger: logger,
+		attrs:  make([]slog.Attr, 0),
+		groups: make([]string, 0),
+	}
+}
+
+// Enabled implements slog.Handler
+func (h *benthosLogHandler) Enabled(ctx context.Context, level slog.Level) bool {
+	// Benthos logger doesn't expose its level, so we'll assume all levels are enabled
+	// and let Benthos handle the filtering
+	return true
+}
+
+// Handle implements slog.Handler
+func (h *benthosLogHandler) Handle(ctx context.Context, r slog.Record) error {
+	// Build the message with attributes
+	msg := r.Message
+	
+	// Add attributes from the record
+	fields := make(map[string]interface{})
+	r.Attrs(func(a slog.Attr) bool {
+		fields[a.Key] = a.Value.Any()
+		return true
+	})
+	
+	// Add pre-existing attributes
+	for _, attr := range h.attrs {
+		fields[attr.Key] = attr.Value.Any()
+	}
+	
+	// Apply group prefixes
+	if len(h.groups) > 0 {
+		groupedFields := fields
+		for i := len(h.groups) - 1; i >= 0; i-- {
+			groupedFields = map[string]interface{}{
+				h.groups[i]: groupedFields,
+			}
+		}
+		fields = groupedFields
+	}
+	
+	// Convert slog level to Benthos logging methods
+	switch r.Level {
+	case slog.LevelDebug:
+		h.logger.With(fields).Debugf(msg)
+	case slog.LevelInfo:
+		h.logger.With(fields).Infof(msg)
+	case slog.LevelWarn:
+		h.logger.With(fields).Warnf(msg)
+	case slog.LevelError:
+		h.logger.With(fields).Errorf(msg)
+	default:
+		// For custom levels, use Info as default
+		h.logger.With(fields).Infof(msg)
+	}
+	
+	return nil
+}
+
+// WithAttrs implements slog.Handler
+func (h *benthosLogHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
+	newHandler := &benthosLogHandler{
+		logger: h.logger,
+		attrs:  make([]slog.Attr, len(h.attrs)+len(attrs)),
+		groups: make([]string, len(h.groups)),
+	}
+	copy(newHandler.attrs, h.attrs)
+	copy(newHandler.attrs[len(h.attrs):], attrs)
+	copy(newHandler.groups, h.groups)
+	return newHandler
+}
+
+// WithGroup implements slog.Handler
+func (h *benthosLogHandler) WithGroup(name string) slog.Handler {
+	if name == "" {
+		return h
+	}
+	newHandler := &benthosLogHandler{
+		logger: h.logger,
+		attrs:  make([]slog.Attr, len(h.attrs)),
+		groups: make([]string, len(h.groups)+1),
+	}
+	copy(newHandler.attrs, h.attrs)
+	copy(newHandler.groups, h.groups)
+	newHandler.groups[len(h.groups)] = name
+	return newHandler
+}
 
 // SystemTime is an interface for getting the current time.
 var SystemTime SystemTimeInterface = systemTime{} // Default to real system time
@@ -33,6 +130,37 @@ type systemTime struct{}
 
 func (systemTime) Now() time.Time                  { return time.Now() }
 func (systemTime) Since(t time.Time) time.Duration { return time.Since(t) }
+
+// bufferPool provides a pool of byte buffers to reduce allocations
+var bufferPool = sync.Pool{
+	New: func() any {
+		// Start with 4KB buffers
+		buf := make([]byte, 4096)
+		return &buf
+	},
+}
+
+// getBuffer gets a buffer from the pool
+func getBuffer(size int) []byte {
+	bufPtr := bufferPool.Get().(*[]byte)
+	buf := *bufPtr
+	if cap(buf) < size {
+		// If the buffer is too small, allocate a new one
+		buf = make([]byte, size)
+	} else {
+		buf = buf[:size]
+	}
+	return buf
+}
+
+// putBuffer returns a buffer to the pool
+func putBuffer(buf []byte) {
+	// Only return buffers that aren't too large (to avoid memory bloat)
+	if cap(buf) <= 1024*1024 { // 1MB max
+		bufPtr := &buf
+		bufferPool.Put(bufPtr)
+	}
+}
 
 type KaitaiProcessor struct {
 	config             KaitaiConfig
@@ -142,9 +270,19 @@ func newKaitaiProcessorFromConfig(conf *service.ParsedConfig, mgr *service.Resou
 		return nil, err
 	}
 
+	// Validation for configuration
+	if schemaPath == "" {
+		return nil, fmt.Errorf("schema_path is required")
+	}
+	
 	// Validation for framing
 	if framingSchemaPath != "" && framingDataFieldID == "" {
 		return nil, fmt.Errorf("framing_data_field_id is required when framing_schema_path is set")
+	}
+	
+	// Validate that framing is only used with parser mode
+	if framingSchemaPath != "" && !isParser {
+		return nil, fmt.Errorf("framing is only supported in parser mode (is_parser: true)")
 	}
 
 	config := KaitaiConfig{
@@ -159,10 +297,15 @@ func newKaitaiProcessorFromConfig(conf *service.ParsedConfig, mgr *service.Resou
 	// Check if schema file exists
 	if _, err := os.Stat(schemaPath); os.IsNotExist(err) {
 		return nil, fmt.Errorf("schema file not found at path: %s", schemaPath)
+	} else if err != nil {
+		return nil, fmt.Errorf("error accessing schema file: %w", err)
 	}
+	
 	if framingSchemaPath != "" {
 		if _, err := os.Stat(framingSchemaPath); os.IsNotExist(err) {
 			return nil, fmt.Errorf("framing schema file not found at path: %s", framingSchemaPath)
+		} else if err != nil {
+			return nil, fmt.Errorf("error accessing framing schema file: %w", err)
 		}
 	}
 
@@ -236,17 +379,6 @@ func (k *KaitaiProcessor) parseFramedBinary(ctx context.Context, msg *service.Me
 		k.logger.Warnf("Empty binary data provided for framed parsing")
 		return service.MessageBatch{}, nil
 	}
-	if err != nil {
-		k.logger.Errorf("Failed to get binary data from message for framing: %v", err)
-		k.mErrorsTotal.Incr(1)
-		msg.SetError(fmt.Errorf("failed to get binary data for framing: %w", err))
-		return service.MessageBatch{msg}, nil
-	}
-
-	if len(inputData) == 0 {
-		k.logger.Warnf("Empty binary data provided for framed parsing")
-		return service.MessageBatch{}, nil
-	}
 	k.logger.With("message_len", len(inputData)).Debugf("Entering framed parsing for message")
 
 	framingSchema, err := k.loadFramingSchema(k.config.FramingSchemaPath)
@@ -282,10 +414,9 @@ func (k *KaitaiProcessor) parseFramedBinary(ctx context.Context, msg *service.Me
 	outputMessages := service.MessageBatch{}
 	var mainFramingError error // To store the first critical framing error
 
-	// Create standard slog.Logger instances as k.logger.Slog() is undefined.
-	// Logs from Kaitai interpreter will go to os.Stderr with this setup.
-	frameInterpreterSlog := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelDebug})).With("component", "frame_interpreter")
-	dataInterpreterSlog := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelDebug})).With("component", "data_interpreter")
+	// Create slog.Logger instances using Benthos logger
+	frameInterpreterSlog := slog.New(newBenthosLogHandler(k.logger)).With("component", "frame_interpreter")
+	dataInterpreterSlog := slog.New(newBenthosLogHandler(k.logger)).With("component", "data_interpreter")
 
 	for {
 		currentPos, errLoopPos := inputStream.Pos()
@@ -392,9 +523,8 @@ func (k *KaitaiProcessor) parseFramedBinary(ctx context.Context, msg *service.Me
 			break // Cannot proceed if the frame structure is unexpected
 		}
 
-		// Convert field name to PascalCase to match the map keys from ParsedDataToMap
-		pascalFieldName := testutil.ToPascalCase(k.config.FramingDataFieldID)
-		payloadRaw, found := frameMap[pascalFieldName]
+		// Use original field name to match the map keys from ParsedDataToMap (now preserves snake_case)
+		payloadRaw, found := frameMap[k.config.FramingDataFieldID]
 		k.mFramesProcessed.Incr(1)
 		if !found {
 			k.logger.With("field_id", k.config.FramingDataFieldID, "frame_type", frameContainerPd.Type).Errorf("Framing data field ID not found in parsed frame")
@@ -554,9 +684,8 @@ func (k *KaitaiProcessor) parseFramedBinary(ctx context.Context, msg *service.Me
 			k.mParsedTotal.Incr(1)
 			k.logger.With("frame_start_pos", frameStartPos).Debugf("Empty payload message created")
 
-			if frameErr == nil { // Only time if frame container parsing was successful
-				k.mFrameProcDuration.Timing(SystemTime.Since(frameParseStartTime).Nanoseconds()) // Use frameParseStartTime for frame container processing time
-			}
+			// Time frame container processing (we're here because frame parsing was successful)
+			k.mFrameProcDuration.Timing(SystemTime.Since(frameParseStartTime).Nanoseconds())
 		}
 
 		// Infinite loop prevention
@@ -658,8 +787,8 @@ func (k *KaitaiProcessor) parseBinary(ctx context.Context, msg *service.Message)
 	stream := kaitai.NewStream(bytes.NewReader(binData))
 
 	// Create interpreter and parse data
-	// Create a standard slog.Logger as k.logger.Slog() is undefined.
-	interpreterSlog := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	// Create slog.Logger instance using Benthos logger
+	interpreterSlog := slog.New(newBenthosLogHandler(k.logger)).With("component", "data_interpreter")
 	interpreter, err := kst.NewKaitaiInterpreter(schema, interpreterSlog)
 	if err != nil {
 		k.logger.Errorf("Failed to create Kaitai interpreter for single parse: %v", err)
@@ -739,8 +868,8 @@ func (k *KaitaiProcessor) serializeToBinary(ctx context.Context, msg *service.Me
 	}
 
 	// Create serializer and serialize data
-	// Create a standard slog.Logger as k.logger.Slog() is undefined.
-	serializerSlog := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	// Create slog.Logger instance using Benthos logger
+	serializerSlog := slog.New(newBenthosLogHandler(k.logger)).With("component", "data_serializer")
 	serializer, err := kst.NewKaitaiSerializer(schema, serializerSlog)
 	if err != nil {
 		k.logger.Errorf("Failed to create Kaitai serializer: %v", err)

@@ -107,7 +107,7 @@ seq:
 		require.NoError(t, err)
 
 		result := ParsedDataToMap(parsed).(map[string]any)
-		assert.Equal(t, "str+++3bar+++", result["complex_field"], 
+		assert.Equal(t, "str+++3bar+++", result["complex_field"],
 			"should preserve content padding but stop at terminator")
 	})
 
@@ -147,7 +147,7 @@ seq:
 
 		result := ParsedDataToMap(parsed).(map[string]any)
 		assert.Equal(t, "hello", result["field1"], "field1 should have padding removed")
-		assert.Equal(t, "world", result["field2"], "field2 should stop at null terminator")  
+		assert.Equal(t, "world", result["field2"], "field2 should stop at null terminator")
 		assert.Equal(t, "end|", result["field3"], "field3 should include terminator")
 	})
 
@@ -218,7 +218,7 @@ seq:
 		require.NoError(t, err)
 
 		result := ParsedDataToMap(parsed).(map[string]any)
-		assert.Equal(t, "content", result["no_terminator"], 
+		assert.Equal(t, "content", result["no_terminator"],
 			"should remove padding when no terminator found")
 	})
 }
@@ -245,7 +245,7 @@ seq:
 
 		testData := []byte("hello world test")
 		stream := kaitai.NewStream(bytes.NewReader(testData))
-		
+
 		_, err = interpreter.Parse(context.Background(), stream)
 		assert.Error(t, err, "should fail with invalid terminator value")
 		assert.Contains(t, err.Error(), "out of range", "error should mention range issue")
@@ -270,7 +270,7 @@ seq:
 
 		testData := []byte("hello world test")
 		stream := kaitai.NewStream(bytes.NewReader(testData))
-		
+
 		_, err = interpreter.Parse(context.Background(), stream)
 		assert.Error(t, err, "should fail with invalid padding value")
 		assert.Contains(t, err.Error(), "out of range", "error should mention range issue")
@@ -281,13 +281,13 @@ seq:
 		// Note: This might require manual SequenceItem construction since YAML parsing
 		// might not allow such values
 		k := &KaitaiInterpreter{}
-		
+
 		field := SequenceItem{
 			ID:         "test",
 			Type:       "str",
 			Terminator: []byte{64}, // unsupported type
 		}
-		
+
 		_, err := k.processStringBytes([]byte("test"), field)
 		assert.Error(t, err, "should fail with unsupported terminator type")
 		assert.Contains(t, err.Error(), "unsupported value type", "error should mention type issue")
@@ -297,7 +297,7 @@ seq:
 func TestStringProcessingPerformance(t *testing.T) {
 	// Basic performance regression test
 	k := &KaitaiInterpreter{}
-	
+
 	t.Run("large_string_with_padding", func(t *testing.T) {
 		// Create a large string with padding
 		content := make([]byte, 10000)
@@ -307,13 +307,13 @@ func TestStringProcessingPerformance(t *testing.T) {
 		for i := 5000; i < 10000; i++ {
 			content[i] = 0x40 // Fill rest with padding '@'
 		}
-		
+
 		field := SequenceItem{
 			ID:       "test",
-			Type:     "str", 
+			Type:     "str",
 			PadRight: 0x40,
 		}
-		
+
 		result, err := k.processStringBytes(content, field)
 		require.NoError(t, err)
 		assert.Equal(t, 5000, len(result), "should remove all padding efficiently")
@@ -331,13 +331,13 @@ func TestStringProcessingPerformance(t *testing.T) {
 				content[i] = byte('X')
 			}
 		}
-		
+
 		field := SequenceItem{
 			ID:         "test",
 			Type:       "str",
 			Terminator: 0x40,
 		}
-		
+
 		result, err := k.processStringBytes(content, field)
 		require.NoError(t, err)
 		assert.Equal(t, 99, len(result), "should stop at first terminator")

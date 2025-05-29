@@ -89,9 +89,18 @@ func (k *KaitaiFloat) ConvertToType(typeVal ref.Type) ref.Val {
 func (k *KaitaiFloat) Equal(other ref.Val) ref.Val {
 	switch o := other.(type) {
 	case *KaitaiFloat:
+		// Special handling for NaN: treat NaN as equal to NaN
+		if math.IsNaN(k.value) && math.IsNaN(o.value) {
+			return types.Bool(true)
+		}
 		return types.Bool(k.value == o.value)
 	case types.Double:
-		return types.Bool(k.value == float64(o))
+		otherVal := float64(o)
+		// Special handling for NaN: treat NaN as equal to NaN
+		if math.IsNaN(k.value) && math.IsNaN(otherVal) {
+			return types.Bool(true)
+		}
+		return types.Bool(k.value == otherVal)
 	case types.Int:
 		return types.Bool(k.value == float64(o))
 	}
@@ -232,8 +241,6 @@ func ReadF8BE(data []byte, offset int) (*KaitaiFloat, error) {
 // FloatTypeOptions provides CEL options for float types
 func FloatTypeOptions() []cel.EnvOption {
 	return []cel.EnvOption{
-		cel.Types(&KaitaiFloat{}),
-
 		cel.Function("f4",
 			cel.Overload("f4_double",
 				[]*cel.Type{cel.DoubleType},

@@ -173,7 +173,7 @@ func TestExpressionLexer(t *testing.T) {
 			name:  "Unclosed string",
 			input: `"hello`, // Missing closing quote
 			expected: []ExpressionToken{
-				{Type: EXPR_STRING, Literal: "hello", Line: 1, Column: 1}, // Lexer will consume until EOF
+				{Type: EXPR_ILLEGAL, Literal: `unterminated string starting with "`, Line: 1, Column: 1}, // Lexer will generate ILLEGAL token
 				{Type: EXPR_EOF, Literal: "", Line: 1, Column: 7},
 			},
 		},
@@ -357,10 +357,10 @@ func TestExpressionParser(t *testing.T) {
 							P:    p(7)},
 						Arg2: &Id{Name: "d", P: p(13)},
 						P:    p(11)},
-					Arg2: &Id{Name: "e", P: p(17)},
+					Arg2: &Id{Name: "e", P: p(18)},
 					P:    p(15)},
-				Arg2: &Id{Name: "f", P: p(21)},
-				P:    p(19),
+				Arg2: &Id{Name: "f", P: p(23)},
+				P:    p(20),
 			},
 		},
 		// --- Ternary Operator ---
@@ -369,8 +369,8 @@ func TestExpressionParser(t *testing.T) {
 			input: "cond ? val_true : val_false",
 			expected: &TernaryOp{
 				Cond:    &Id{Name: "cond", P: p(1)},
-				IfTrue:  &Id{Name: "val_true", P: p(9)},
-				IfFalse: &Id{Name: "val_false", P: p(20)},
+				IfTrue:  &Id{Name: "val_true", P: p(8)},
+				IfFalse: &Id{Name: "val_false", P: p(19)},
 				P:       p(6),
 			},
 		},
@@ -462,23 +462,23 @@ func TestExpressionParser(t *testing.T) {
 					Op: BinOpEq,
 					Arg1: &BinOp{
 						Op:   BinOpAdd,
-						Arg1: &Attr{Value: &Io{P: p(1)}, Name: "pos", P: p(5)},
-						Arg2: &BinOp{Op: BinOpMul, Arg1: &IntLit{Value: 2, P: p(11)}, Arg2: &Id{Name: "my_var", P: p(15)}, P: p(13)},
+						Arg1: &Attr{Value: &Io{P: p(1)}, Name: "pos", P: p(4)},
+						Arg2: &BinOp{Op: BinOpMul, Arg1: &IntLit{Value: 2, P: p(12)}, Arg2: &Id{Name: "my_var", P: p(16)}, P: p(14)},
 						P:    p(9),
 					},
 					Arg2: &ArrayIdx{
-						Value: &Attr{Value: &Parent{P: p(22)}, Name: "some_array", P: p(30)},
-						Idx:   &Id{Name: "idx_val", P: p(41)},
-						P:     p(22),
+						Value: &Attr{Value: &Parent{P: p(27)}, Name: "some_array", P: p(34)},
+						Idx:   &Id{Name: "idx_val", P: p(46)},
+						P:     p(34),
 					},
-					P: p(19),
+					P: p(24),
 				},
 				Arg2: &UnOp{
 					Op:  UnOpNot,
-					Arg: &BinOp{Op: BinOpDiv, Arg1: &FltLit{Value: 1.0, P: p(50)}, Arg2: &FltLit{Value: 2.0, P: p(56)}, P: p(54)},
-					P:   p(48),
+					Arg: &BinOp{Op: BinOpDiv, Arg1: &FltLit{Value: 1.0, P: p(60)}, Arg2: &FltLit{Value: 2.0, P: p(66)}, P: p(64)},
+					P:   p(58),
 				},
-				P: p(45),
+				P: p(55),
 			},
 		},
 		{
@@ -488,7 +488,7 @@ func TestExpressionParser(t *testing.T) {
 				Cond: &BinOp{
 					Op:   BinOpGt,
 					Arg1: &Id{Name: "cond_val", P: p(1)},
-					Arg2: &IntLit{Value: 10, P: p(13)},
+					Arg2: &IntLit{Value: 10, P: p(12)},
 					P:    p(10),
 				},
 				IfTrue: &Call{
@@ -498,14 +498,14 @@ func TestExpressionParser(t *testing.T) {
 				},
 				IfFalse: &CastToType{
 					Value: &Call{
-						Value: &Attr{Value: &Id{Name: "obj", P: p(31)}, Name: "meth", P: p(35)},
+						Value: &Attr{Value: &Id{Name: "obj", P: p(30)}, Name: "meth", P: p(33)},
 						Args:  []Expr{},
-						P:     p(31),
+						P:     p(1),
 					},
 					TypeName: "u2",
-					P:        p(31),
+					P:        p(1),
 				},
-				P: p(15),
+				P: p(6),
 			},
 		},
 		// --- Error Cases ---

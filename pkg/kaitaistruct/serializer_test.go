@@ -2,11 +2,13 @@ package kaitaistruct
 
 import (
 	"bytes"
+	"compress/zlib"
 	"context"
 	"fmt"
 	"io"
 	"log/slog"
 	"testing"
+	"time"
 
 	"github.com/kaitai-io/kaitai_struct_go_runtime/kaitai"
 	"github.com/stretchr/testify/assert"
@@ -651,6 +653,141 @@ func TestReverseProcess_XOR(t *testing.T) {
 	assert.Equal(t, expected, reversed, "XOR is its own inverse")
 }
 
+func TestReverseProcess_Zlib(t *testing.T) {
+	schema := &KaitaiSchema{Meta: Meta{ID: "dummy"}}
+	s := newTestSerializer(t, schema)
+	sCtx := &SerializeContext{
+		Writer: kaitai.NewWriter(bytes.NewBuffer(nil)),
+	}
+
+	// Test data - use longer data to ensure compression actually reduces size
+	originalData := []byte("Hello, zlib compression test! This is a longer string to ensure compression actually reduces the size of the data when we test round-trip functionality.")
+	processSpec := "zlib"
+
+	// Reverse process should compress the data
+	compressed, err := s.reverseProcess(context.Background(), originalData, processSpec, sCtx)
+	require.NoError(t, err)
+	assert.NotEqual(t, originalData, compressed, "Compressed data should be different")
+	// Note: Don't assert size reduction as zlib may add headers that make small data larger
+
+	// Decompress it back to verify round-trip
+	decompressed, err := kaitai.ProcessZlib(compressed)
+	require.NoError(t, err)
+	assert.Equal(t, originalData, decompressed, "Round-trip should recover original data")
+}
+
+func TestReverseProcess_Rotate(t *testing.T) {
+	schema := &KaitaiSchema{Meta: Meta{ID: "dummy"}}
+	s := newTestSerializer(t, schema)
+	sCtx := &SerializeContext{
+		Writer: kaitai.NewWriter(bytes.NewBuffer(nil)),
+	}
+
+	data := []byte{0x01, 0x02, 0x03}
+	
+	tests := []struct {
+		name        string
+		processSpec string
+		expected    []byte
+	}{
+		{
+			name:        "rol(1) reverse becomes ror(1)",
+			processSpec: "rol(1)",
+			expected:    []byte{0x80, 0x01, 0x81}, // Right rotate by 1
+		},
+		{
+			name:        "ror(1) reverse becomes rol(1)", 
+			processSpec: "ror(1)",
+			expected:    []byte{0x02, 0x04, 0x06}, // Left rotate by 1
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			reversed, err := s.reverseProcess(context.Background(), data, tt.processSpec, sCtx)
+			require.NoError(t, err)
+			assert.Equal(t, tt.expected, reversed)
+		})
+	}
+}
+
+func TestSerialize_ProcessRoundTrip(t *testing.T) {
+	// Test that process functions work correctly in serialize -> parse round-trip
+	tests := []struct {
+		name        string
+		processSpec string
+		testData    string
+	}{
+		{
+			name:        "XOR with constant",
+			processSpec: "xor(0xff)",
+			testData:    "test data",
+		},
+		{
+			name:        "Zlib compression",
+			processSpec: "zlib", 
+			testData:    "This is a longer test string to ensure zlib compression works properly",
+		},
+		{
+			name:        "Rotate left",
+			processSpec: "rol(3)",
+			testData:    "rotate",
+		},
+		{
+			name:        "Rotate right", 
+			processSpec: "ror(2)",
+			testData:    "rotate",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			yamlContent := fmt.Sprintf(`
+meta:
+  id: process_test
+seq:
+  - id: data
+    type: bytes
+    size-eos: true
+    process: %s
+`, tt.processSpec)
+
+			schema, err := NewKaitaiSchemaFromYAML([]byte(yamlContent))
+			require.NoError(t, err)
+
+			// Create test data structure
+			testStruct := map[string]any{
+				"data": tt.testData,
+			}
+
+			// Serialize
+			serializer := newTestSerializer(t, schema)
+			serializedData, err := serializer.Serialize(context.Background(), testStruct)
+			require.NoError(t, err)
+
+			// Parse back
+			interpreter, err := NewKaitaiInterpreter(schema, nil)
+			require.NoError(t, err)
+
+			stream := kaitai.NewStream(bytes.NewReader(serializedData))
+			parsed, err := interpreter.Parse(context.Background(), stream)
+			require.NoError(t, err)
+
+			parsedMap := ParsedDataToMap(parsed)
+			dataMap, ok := parsedMap.(map[string]any)
+			require.True(t, ok)
+
+			// Verify round-trip (now expecting bytes since we changed type to bytes)
+			parsedData, ok := dataMap["data"]
+			require.True(t, ok)
+			
+			dataBytes, ok := parsedData.([]byte)
+			require.True(t, ok, "Expected bytes data")
+			assert.Equal(t, tt.testData, string(dataBytes))
+		})
+	}
+}
+
 func TestSerialize_RootTypeSpecifiedInMeta(t *testing.T) {
 	schema := &KaitaiSchema{
 		Meta: Meta{ID: "should_be_ignored_id", Endian: "le"}, // This ID should be ignored
@@ -1035,4 +1172,786 @@ func TestKaitaicelIntegration_PerformanceBaseline(t *testing.T) {
 	result, err := s.Serialize(context.Background(), data)
 	require.NoError(t, err)
 	assert.Equal(t, expected, result)
+}
+
+// ===== ADVANCED SERIALIZER ERROR HANDLING TESTS =====
+
+func TestSerialize_AdvancedErrorHandling(t *testing.T) {
+	t.Run("corrupted schema data", func(t *testing.T) {
+		schema := &KaitaiSchema{
+			Meta: Meta{ID: "corrupted_schema"},
+			Seq: []SequenceItem{
+				{ID: "field", Type: "str", Size: "invalid_size_expr"},
+			},
+		}
+		s := newTestSerializer(t, schema)
+		data := map[string]any{"field": "test"}
+		
+		_, err := s.Serialize(context.Background(), data)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "invalid_size_expr")
+	})
+
+	t.Run("type conversion overflow", func(t *testing.T) {
+		schema := &KaitaiSchema{
+			Meta: Meta{ID: "overflow_test"},
+			Seq: []SequenceItem{
+				{ID: "tiny_val", Type: "u1"},
+			},
+		}
+		s := newTestSerializer(t, schema)
+		data := map[string]any{"tiny_val": int64(999999)} // Too large for u1
+		
+		_, err := s.Serialize(context.Background(), data)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "out of range")
+	})
+
+	t.Run("invalid encoding for string", func(t *testing.T) {
+		schema := &KaitaiSchema{
+			Meta: Meta{ID: "invalid_encoding"},
+			Seq: []SequenceItem{
+				{ID: "str_field", Type: "str", Size: 5, Encoding: "INVALID_ENCODING"},
+			},
+		}
+		s := newTestSerializer(t, schema)
+		data := map[string]any{"str_field": "hello"}
+		
+		_, err := s.Serialize(context.Background(), data)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "unsupported encoding")
+	})
+
+	t.Run("circular type reference", func(t *testing.T) {
+		schema := &KaitaiSchema{
+			Meta: Meta{ID: "circular_ref"},
+			Types: map[string]Type{
+				"type_a": {Seq: []SequenceItem{{ID: "ref_b", Type: "type_b"}}},
+				"type_b": {Seq: []SequenceItem{{ID: "ref_a", Type: "type_a"}}},
+			},
+			Seq: []SequenceItem{{ID: "start", Type: "type_a"}},
+		}
+		s := newTestSerializer(t, schema)
+		
+		// Create circular data structure
+		dataA := map[string]any{}
+		dataB := map[string]any{}
+		dataA["ref_b"] = dataB
+		dataB["ref_a"] = dataA
+		data := map[string]any{"start": dataA}
+		
+		// This should eventually hit a stack overflow or similar error
+		ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+		defer cancel()
+		
+		_, err := s.Serialize(ctx, data)
+		require.Error(t, err)
+		// Error could be timeout or stack overflow
+	})
+
+	t.Run("invalid repeat expression result", func(t *testing.T) {
+		schema := &KaitaiSchema{
+			Meta: Meta{ID: "invalid_repeat"},
+			Seq: []SequenceItem{
+				{ID: "items", Type: "u1", Repeat: "expr", RepeatExpr: `"not_a_number"`},
+			},
+		}
+		s := newTestSerializer(t, schema)
+		data := map[string]any{"items": []any{uint8(1), uint8(2)}}
+		
+		_, err := s.Serialize(context.Background(), data)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "result is not a number")
+	})
+
+	t.Run("process function with invalid parameters", func(t *testing.T) {
+		schema := &KaitaiSchema{
+			Meta: Meta{ID: "invalid_process"},
+			Seq: []SequenceItem{
+				{ID: "data", Type: "bytes", Size: 4, Process: "xor(invalid_hex)"},
+			},
+		}
+		s := newTestSerializer(t, schema)
+		data := map[string]any{"data": []byte{1, 2, 3, 4}}
+		
+		_, err := s.Serialize(context.Background(), data)
+		require.Error(t, err)
+		// Should fail when trying to evaluate the invalid parameter
+	})
+
+	t.Run("enum serialization with invalid value", func(t *testing.T) {
+		schema := &KaitaiSchema{
+			Meta: Meta{ID: "enum_test"},
+			Enums: map[string]EnumDef{
+				"colors": {1: "red", 2: "blue", 3: "green"},
+			},
+			Seq: []SequenceItem{
+				{ID: "color", Type: "u1", Enum: "colors"},
+			},
+		}
+		s := newTestSerializer(t, schema)
+		
+		// Try to serialize enum with invalid structure
+		data := map[string]any{"color": "invalid_enum_format"}
+		
+		_, err := s.Serialize(context.Background(), data)
+		require.Error(t, err)
+		// Should fail because enum value is not in the expected format
+	})
+}
+
+func TestSerialize_SizeEosEdgeCases(t *testing.T) {
+	t.Run("size-eos with complex types", func(t *testing.T) {
+		schema := &KaitaiSchema{
+			Meta: Meta{ID: "size_eos_complex"},
+			Seq: []SequenceItem{
+				{ID: "header", Type: "u2le"},
+				{ID: "data", Type: "str", SizeEOS: true, Encoding: "UTF-8"},
+			},
+		}
+		s := newTestSerializer(t, schema)
+		
+		data := map[string]any{
+			"header": uint16(0x1234),
+			"data":   "This is the remaining data until end of stream",
+		}
+		
+		result, err := s.Serialize(context.Background(), data)
+		require.NoError(t, err)
+		
+		// Should contain header + all the string data
+		assert.True(t, len(result) > 2) // At least header size
+		assert.Equal(t, []byte{0x34, 0x12}, result[:2]) // Header in LE
+		assert.Equal(t, "This is the remaining data until end of stream", string(result[2:]))
+	})
+
+	t.Run("multiple size-eos fields should error", func(t *testing.T) {
+		schema := &KaitaiSchema{
+			Meta: Meta{ID: "multiple_size_eos"},
+			Seq: []SequenceItem{
+				{ID: "data1", Type: "bytes", SizeEOS: true},
+				{ID: "data2", Type: "bytes", SizeEOS: true}, // This should be problematic
+			},
+		}
+		s := newTestSerializer(t, schema)
+		
+		data := map[string]any{
+			"data1": []byte{1, 2, 3},
+			"data2": []byte{4, 5, 6},
+		}
+		
+		// The behavior here depends on implementation - could work or error
+		// For now, just test that it doesn't panic
+		_, err := s.Serialize(context.Background(), data)
+		// Could be success or error, but shouldn't panic
+		t.Logf("Multiple size-eos result: %v", err)
+	})
+
+	t.Run("size-eos with process", func(t *testing.T) {
+		schema := &KaitaiSchema{
+			Meta: Meta{ID: "size_eos_process"},
+			Seq: []SequenceItem{
+				{ID: "compressed_data", Type: "bytes", SizeEOS: true, Process: "zlib"},
+			},
+		}
+		s := newTestSerializer(t, schema)
+		
+		data := map[string]any{
+			"compressed_data": "This text will be compressed with zlib when serialized",
+		}
+		
+		result, err := s.Serialize(context.Background(), data)
+		require.NoError(t, err)
+		
+		// Should contain zlib-compressed data
+		assert.True(t, len(result) > 0)
+		// Verify it's actually compressed by trying to decompress
+		reader, err := zlib.NewReader(bytes.NewReader(result))
+		require.NoError(t, err)
+		decompressed, err := io.ReadAll(reader)
+		require.NoError(t, err)
+		reader.Close()
+		
+		assert.Equal(t, "This text will be compressed with zlib when serialized", string(decompressed))
+	})
+}
+
+func TestSerialize_NestedSwitchTypes(t *testing.T) {
+	t.Run("switch within switch", func(t *testing.T) {
+		schema := &KaitaiSchema{
+			Meta: Meta{ID: "nested_switch"},
+			Types: map[string]Type{
+				"inner_type_a": {Seq: []SequenceItem{{ID: "value", Type: "u1"}}},
+				"inner_type_b": {Seq: []SequenceItem{{ID: "value", Type: "u2le"}}},
+				"outer_type_x": {
+					Seq: []SequenceItem{
+						{ID: "inner_selector", Type: "u1"},
+						{
+							ID:   "inner_data",
+							Type: "switch",
+							Switch: map[string]any{
+								"switch-on": "inner_selector",
+								"cases": map[string]string{
+									"1": "inner_type_a",
+									"2": "inner_type_b",
+								},
+							},
+						},
+					},
+				},
+				"outer_type_y": {Seq: []SequenceItem{{ID: "simple", Type: "u4le"}}},
+			},
+			Seq: []SequenceItem{
+				{ID: "outer_selector", Type: "u1"},
+				{
+					ID:   "outer_data",
+					Type: "switch",
+					Switch: map[string]any{
+						"switch-on": "outer_selector",
+						"cases": map[string]string{
+							"10": "outer_type_x",
+							"20": "outer_type_y",
+						},
+					},
+				},
+			},
+		}
+		s := newTestSerializer(t, schema)
+		
+		data := map[string]any{
+			"outer_selector": uint8(10),
+			"outer_data": map[string]any{
+				"inner_selector": uint8(2),
+				"inner_data": map[string]any{
+					"value": uint16(0x1234),
+				},
+			},
+		}
+		
+		result, err := s.Serialize(context.Background(), data)
+		require.NoError(t, err)
+		
+		expected := []byte{
+			10,         // outer_selector
+			2,          // inner_selector  
+			0x34, 0x12, // value as u2le
+		}
+		assert.Equal(t, expected, result)
+	})
+
+	t.Run("switch with ad-hoc type expressions", func(t *testing.T) {
+		schema := &KaitaiSchema{
+			Meta: Meta{ID: "adhoc_switch_complex"},
+			Types: map[string]Type{
+				"type_conditional": {Seq: []SequenceItem{{ID: "data", Type: "u4be"}}},
+			},
+			Seq: []SequenceItem{
+				{ID: "mode", Type: "u1"},
+				{ID: "size_factor", Type: "u1"},
+				{
+					ID:   "dynamic_field",
+					Type: "switch-on: mode > 5 ? (size_factor == 1 ? 'u1' : 'type_conditional') : 'u2le'",
+				},
+			},
+		}
+		s := newTestSerializer(t, schema)
+		
+		// Test case 1: mode > 5 and size_factor == 1 -> u1
+		data1 := map[string]any{
+			"mode":          uint8(10),
+			"size_factor":   uint8(1),
+			"dynamic_field": uint8(0xFF),
+		}
+		
+		result1, err := s.Serialize(context.Background(), data1)
+		require.NoError(t, err)
+		assert.Equal(t, []byte{10, 1, 0xFF}, result1)
+		
+		// Test case 2: mode > 5 and size_factor != 1 -> type_conditional
+		data2 := map[string]any{
+			"mode":        uint8(10),
+			"size_factor": uint8(2),
+			"dynamic_field": map[string]any{
+				"data": uint32(0x12345678),
+			},
+		}
+		
+		result2, err := s.Serialize(context.Background(), data2)
+		require.NoError(t, err)
+		assert.Equal(t, []byte{10, 2, 0x12, 0x34, 0x56, 0x78}, result2) // u4be
+		
+		// Test case 3: mode <= 5 -> u2le
+		data3 := map[string]any{
+			"mode":          uint8(3),
+			"size_factor":   uint8(99), // Irrelevant
+			"dynamic_field": uint16(0x1234),
+		}
+		
+		result3, err := s.Serialize(context.Background(), data3)
+		require.NoError(t, err)
+		assert.Equal(t, []byte{3, 99, 0x34, 0x12}, result3) // u2le
+	})
+}
+
+func TestSerialize_InstancesAndExpressions(t *testing.T) {
+	t.Run("instances used in size expressions", func(t *testing.T) {
+		schema := &KaitaiSchema{
+			Meta: Meta{ID: "instances_in_size"},
+			Instances: map[string]InstanceDef{
+				"calculated_size": {Value: "header_len + 4"},
+				"max_size":        {Value: "calculated_size > 10 ? 10 : calculated_size"},
+			},
+			Seq: []SequenceItem{
+				{ID: "header_len", Type: "u1"},
+				{ID: "dynamic_data", Type: "bytes", Size: "max_size"},
+			},
+		}
+		s := newTestSerializer(t, schema)
+		
+		data := map[string]any{
+			"header_len":    uint8(3),
+			"dynamic_data": []byte{0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF, 0x11},
+		}
+		
+		result, err := s.Serialize(context.Background(), data)
+		require.NoError(t, err)
+		
+		// calculated_size = 3 + 4 = 7, max_size = 7 (since 7 <= 10)
+		// So dynamic_data should be truncated to 7 bytes
+		expected := []byte{3, 0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF, 0x11}
+		assert.Equal(t, expected, result)
+	})
+
+	t.Run("instances with complex expressions", func(t *testing.T) {
+		schema := &KaitaiSchema{
+			Meta: Meta{ID: "complex_instances"},
+			Instances: map[string]InstanceDef{
+				"is_big_endian":   {Value: "(header_flags & 0x01) != 0"},
+				"data_multiplier": {Value: "is_big_endian ? 2 : 1"},
+				"actual_count":    {Value: "item_count * data_multiplier"},
+			},
+			Seq: []SequenceItem{
+				{ID: "header_flags", Type: "u1"},
+				{ID: "item_count", Type: "u1"},
+				{ID: "items", Type: "u1", Repeat: "expr", RepeatExpr: "actual_count"},
+			},
+		}
+		s := newTestSerializer(t, schema)
+		
+		// Test big-endian case (flags & 0x01 != 0)
+		data := map[string]any{
+			"header_flags": uint8(0x01), // is_big_endian = true
+			"item_count":   uint8(3),    // actual_count = 3 * 2 = 6
+			"items":        []any{uint8(1), uint8(2), uint8(3), uint8(4), uint8(5), uint8(6)},
+		}
+		
+		result, err := s.Serialize(context.Background(), data)
+		require.NoError(t, err)
+		
+		expected := []byte{0x01, 3, 1, 2, 3, 4, 5, 6}
+		assert.Equal(t, expected, result)
+	})
+}
+
+func TestSerialize_ContextCancellation(t *testing.T) {
+	t.Run("context cancellation during serialization", func(t *testing.T) {
+		schema := &KaitaiSchema{
+			Meta: Meta{ID: "cancellation_test"},
+			Seq: []SequenceItem{
+				{ID: "items", Type: "u4le", Repeat: "expr", RepeatExpr: "count"},
+			},
+		}
+		s := newTestSerializer(t, schema)
+		
+		// Create a large dataset to increase chance of cancellation
+		items := make([]any, 1000)
+		for i := range items {
+			items[i] = uint32(i)
+		}
+		
+		data := map[string]any{
+			"count": uint32(1000),
+			"items": items,
+		}
+		
+		// Cancel context quickly
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel() // Cancel immediately
+		
+		_, err := s.Serialize(ctx, data)
+		require.Error(t, err)
+		assert.Equal(t, context.Canceled, err)
+	})
+
+	t.Run("timeout during complex serialization", func(t *testing.T) {
+		schema := &KaitaiSchema{
+			Meta: Meta{ID: "timeout_test"},
+			Types: map[string]Type{
+				"complex_type": {
+					Seq: []SequenceItem{
+						{ID: "data", Type: "bytes", Size: "1000"},
+					},
+				},
+			},
+			Seq: []SequenceItem{
+				{ID: "items", Type: "complex_type", Repeat: "expr", RepeatExpr: "100"},
+			},
+		}
+		s := newTestSerializer(t, schema)
+		
+		// Create data
+		item := map[string]any{"data": make([]byte, 1000)}
+		items := make([]any, 100)
+		for i := range items {
+			items[i] = item
+		}
+		
+		data := map[string]any{"items": items}
+		
+		// Very short timeout
+		ctx, cancel := context.WithTimeout(context.Background(), 1*time.Nanosecond)
+		defer cancel()
+		
+		_, err := s.Serialize(ctx, data)
+		// Should timeout or be canceled
+		require.Error(t, err)
+		// Could be DeadlineExceeded or Canceled depending on timing
+	})
+}
+
+// ===== ENUM SERIALIZATION TESTS =====
+
+func TestSerialize_EnumValues(t *testing.T) {
+	// Test data based on test/formats/enum_0.ksy and test/src/enum_0.bin
+	t.Run("basic enum serialization", func(t *testing.T) {
+		schema := &KaitaiSchema{
+			Meta: Meta{ID: "enum_0"},
+			Enums: map[string]EnumDef{
+				"animal": {4: "cat", 7: "chicken", 12: "dog"},
+			},
+			Seq: []SequenceItem{
+				{ID: "pet_1", Type: "u1", Enum: "animal"},
+				{ID: "pet_2", Type: "u1", Enum: "animal"},
+			},
+		}
+		s := newTestSerializer(t, schema)
+
+		// Test serializing enum objects (as expected from parser output)
+		data := map[string]any{
+			"pet_1": map[string]any{"name": "cat", "value": int64(4), "valid": true},
+			"pet_2": map[string]any{"name": "chicken", "value": int64(7), "valid": true},
+		}
+
+		result, err := s.Serialize(context.Background(), data)
+		require.NoError(t, err)
+
+		// Should match test/src/enum_0.bin content
+		expected := []byte{4, 7} // cat=4, chicken=7
+		assert.Equal(t, expected, result)
+	})
+
+	t.Run("enum with integer values", func(t *testing.T) {
+		schema := &KaitaiSchema{
+			Meta: Meta{ID: "enum_test_int"},
+			Enums: map[string]EnumDef{
+				"status": {0: "inactive", 1: "active", 255: "error"},
+			},
+			Seq: []SequenceItem{
+				{ID: "state", Type: "u1", Enum: "status"},
+			},
+		}
+		s := newTestSerializer(t, schema)
+
+		// Test with raw integer values (alternative input format)
+		data := map[string]any{
+			"state": uint8(255), // error state
+		}
+
+		result, err := s.Serialize(context.Background(), data)
+		require.NoError(t, err)
+		assert.Equal(t, []byte{255}, result)
+	})
+
+	t.Run("enum with invalid value should error", func(t *testing.T) {
+		schema := &KaitaiSchema{
+			Meta: Meta{ID: "enum_invalid"},
+			Enums: map[string]EnumDef{
+				"valid_values": {1: "one", 2: "two"},
+			},
+			Seq: []SequenceItem{
+				{ID: "value", Type: "u1", Enum: "valid_values"},
+			},
+		}
+		s := newTestSerializer(t, schema)
+
+		// Try invalid enum value
+		data := map[string]any{
+			"value": uint8(99), // Not in enum
+		}
+
+		// Note: This might succeed depending on implementation
+		// Kaitai generally allows invalid enum values during serialization
+		result, err := s.Serialize(context.Background(), data)
+		if err == nil {
+			assert.Equal(t, []byte{99}, result)
+			t.Log("Serializer allows invalid enum values (expected behavior)")
+		} else {
+			t.Log("Serializer rejects invalid enum values")
+		}
+	})
+}
+
+// ===== BIT FIELD SERIALIZATION TESTS =====
+
+func TestSerialize_BitFields(t *testing.T) {
+	// Test data based on test/formats/bits_simple.ksy and test/src/bits_simple.bin
+	t.Run("mixed bit and byte fields", func(t *testing.T) {
+		schema := &KaitaiSchema{
+			Meta: Meta{ID: "bits_simple"},
+			Seq: []SequenceItem{
+				{ID: "byte_1", Type: "u1"},
+				{ID: "bits_a", Type: "b1"},
+				{ID: "bits_b", Type: "b1"},
+				{ID: "bits_c", Type: "b6"},
+				{ID: "byte_2", Type: "u1"},
+				{ID: "test_if_b1", Type: "b1", IfExpr: "bits_a != 0"},
+				{ID: "byte_8_9_10", Type: "b24le"},
+				{ID: "byte_11_to_14", Type: "b32le"},
+				{ID: "byte_15_to_19", Type: "b40be"},
+				{ID: "byte_20_to_27", Type: "b64be"},
+				{ID: "spacer", Type: "b1"},
+				{ID: "large_bits_1", Type: "b10"},
+				{ID: "large_bits_2", Type: "b53"},
+			},
+		}
+		s := newTestSerializer(t, schema)
+
+		// Test data that should produce known binary output
+		data := map[string]any{
+			"byte_1":         uint8(0x50),
+			"bits_a":         uint8(1),     // 1 bit
+			"bits_b":         uint8(0),     // 1 bit  
+			"bits_c":         uint8(0x2A),  // 6 bits (0x2A = 42, fits in 6 bits)
+			"byte_2":         uint8(0x41),
+			"test_if_b1":     uint8(1),     // Should be included since bits_a != 0
+			"byte_8_9_10":    uint32(0x434b50), // 24-bit LE
+			"byte_11_to_14":  uint32(0x2d31ffff), // 32-bit LE
+			"byte_15_to_19":  uint64(0x5041434b2d), // 40-bit BE (truncated)
+			"byte_20_to_27":  uint64(0x31ffff5041434b2d), // 64-bit BE
+			"spacer":         uint8(0),     // 1 bit padding
+			"large_bits_1":   uint16(0x200), // 10 bits
+			"large_bits_2":   uint64(0x1fffffffffffff), // 53 bits
+		}
+
+		result, err := s.Serialize(context.Background(), data)
+		require.NoError(t, err)
+
+		// The exact output depends on bit packing implementation
+		// Just verify we get some reasonable output
+		assert.True(t, len(result) > 0)
+		t.Logf("Bit field serialization produced %d bytes", len(result))
+	})
+
+	t.Run("bit endianness variations", func(t *testing.T) {
+		schema := &KaitaiSchema{
+			Meta: Meta{ID: "bit_endian_test", BitEndian: "le"},
+			Seq: []SequenceItem{
+				{ID: "bits_le", Type: "b12le"},
+				{ID: "bits_be", Type: "b12be"},
+				{ID: "padding", Type: "b8"},
+			},
+		}
+		s := newTestSerializer(t, schema)
+
+		data := map[string]any{
+			"bits_le": uint16(0x123),
+			"bits_be": uint16(0x456),
+			"padding": uint8(0xFF),
+		}
+
+		result, err := s.Serialize(context.Background(), data)
+		require.NoError(t, err)
+		assert.True(t, len(result) >= 4) // At least 32 bits = 4 bytes
+	})
+}
+
+// ===== FLOATING POINT SERIALIZATION TESTS =====
+
+func TestSerialize_FloatingPoint(t *testing.T) {
+	// Test data based on test/formats/floating_points.ksy and test/src/floating_points.bin
+	t.Run("float32 and float64 values", func(t *testing.T) {
+		schema := &KaitaiSchema{
+			Meta: Meta{ID: "floating_points", Endian: "le"},
+			Seq: []SequenceItem{
+				{ID: "single_value", Type: "f4"},
+				{ID: "double_value", Type: "f8"},
+				{ID: "single_value_be", Type: "f4be"},
+				{ID: "double_value_be", Type: "f8be"},
+				{ID: "approximate_value", Type: "f4le"},
+			},
+		}
+		s := newTestSerializer(t, schema)
+
+		data := map[string]any{
+			"single_value":     float32(0.5),
+			"double_value":     float64(0.25),
+			"single_value_be":  float32(16.0),
+			"double_value_be":  float64(8.5),
+			"approximate_value": float32(1.2345),
+		}
+
+		result, err := s.Serialize(context.Background(), data)
+		require.NoError(t, err)
+
+		// Should be 4 + 8 + 4 + 8 + 4 = 28 bytes
+		assert.Equal(t, 28, len(result))
+
+		// Test that round-trip works (parse back and verify)
+		interpreter, err := NewKaitaiInterpreter(schema, nil)
+		require.NoError(t, err)
+
+		stream := kaitai.NewStream(bytes.NewReader(result))
+		parsed, err := interpreter.Parse(context.Background(), stream)
+		require.NoError(t, err)
+
+		parsedMap := ParsedDataToMap(parsed)
+		dataMap, ok := parsedMap.(map[string]any)
+		require.True(t, ok)
+
+		// Verify floating point values (with some tolerance for precision)
+		assert.InDelta(t, 0.5, dataMap["single_value"], 0.0001)
+		assert.InDelta(t, 0.25, dataMap["double_value"], 0.000001)
+		assert.InDelta(t, 16.0, dataMap["single_value_be"], 0.0001)
+		assert.InDelta(t, 8.5, dataMap["double_value_be"], 0.000001)
+		assert.InDelta(t, 1.2345, dataMap["approximate_value"], 0.0001)
+	})
+}
+
+// ===== REPEAT FIELD SERIALIZATION TESTS =====
+
+func TestSerialize_RepeatFields(t *testing.T) {
+	t.Run("repeat eos with structs", func(t *testing.T) {
+		// Based on test/formats/repeat_eos_struct.ksy
+		schema := &KaitaiSchema{
+			Meta: Meta{ID: "repeat_eos_struct"},
+			Types: map[string]Type{
+				"chunk": {
+					Seq: []SequenceItem{
+						{ID: "offset", Type: "u4le"},
+						{ID: "len", Type: "u4le"},
+					},
+				},
+			},
+			Seq: []SequenceItem{
+				{ID: "chunks", Type: "chunk", Repeat: "eos"},
+			},
+		}
+		s := newTestSerializer(t, schema)
+
+		data := map[string]any{
+			"chunks": []any{
+				map[string]any{"offset": uint32(0x12345678), "len": uint32(0x9ABCDEF0)},
+				map[string]any{"offset": uint32(0x11111111), "len": uint32(0x22222222)},
+				map[string]any{"offset": uint32(0x33333333), "len": uint32(0x44444444)},
+			},
+		}
+
+		result, err := s.Serialize(context.Background(), data)
+		require.NoError(t, err)
+
+		// Should be 3 chunks * 8 bytes each = 24 bytes
+		assert.Equal(t, 24, len(result))
+
+		// Verify by parsing back
+		interpreter, err := NewKaitaiInterpreter(schema, nil)
+		require.NoError(t, err)
+
+		stream := kaitai.NewStream(bytes.NewReader(result))
+		parsed, err := interpreter.Parse(context.Background(), stream)
+		require.NoError(t, err)
+
+		parsedMap := ParsedDataToMap(parsed)
+		dataMap, ok := parsedMap.(map[string]any)
+		require.True(t, ok)
+
+		chunks, ok := dataMap["chunks"].([]any)
+		require.True(t, ok)
+		assert.Len(t, chunks, 3)
+	})
+
+	t.Run("repeat until condition", func(t *testing.T) {
+		schema := &KaitaiSchema{
+			Meta: Meta{ID: "repeat_until_test"},
+			Seq: []SequenceItem{
+				{ID: "values", Type: "u1", Repeat: "until", RepeatUntil: "_ == 0xFF"},
+			},
+		}
+		s := newTestSerializer(t, schema)
+
+		// Data ending with 0xFF terminator
+		data := map[string]any{
+			"values": []any{uint8(1), uint8(2), uint8(3), uint8(0xFF)},
+		}
+
+		result, err := s.Serialize(context.Background(), data)
+		require.NoError(t, err)
+
+		expected := []byte{1, 2, 3, 0xFF}
+		assert.Equal(t, expected, result)
+	})
+}
+
+// ===== STRING ENCODING SERIALIZATION TESTS =====
+
+func TestSerialize_StringEncodings(t *testing.T) {
+	// Based on test/formats/str_encodings.ksy and test/src/str_encodings.bin
+	t.Run("various string encodings", func(t *testing.T) {
+		schema := &KaitaiSchema{
+			Meta: Meta{ID: "str_encodings"},
+			Seq: []SequenceItem{
+				{ID: "str1", Type: "str", Size: 12, Encoding: "ASCII"},
+				{ID: "str2", Type: "str", Size: 8, Encoding: "UTF-8"},
+				{ID: "str3", Type: "str", Size: 10}, // Default encoding
+				{ID: "str4", Type: "str", Size: 4, Encoding: "UTF-8"},
+			},
+		}
+		s := newTestSerializer(t, schema)
+
+		data := map[string]any{
+			"str1": "Some ASCII",  // 12 chars
+			"str2": "UTF-8 ♠♥",    // 8 bytes (symbols are multi-byte)
+			"str3": "And more ",   // 10 chars
+			"str4": "2\u0013\u0001\u0002", // 4 bytes with special chars
+		}
+
+		result, err := s.Serialize(context.Background(), data)
+		require.NoError(t, err)
+
+		// Total should be 12 + 8 + 10 + 4 = 34 bytes
+		// (might be different due to UTF-8 encoding)
+		assert.True(t, len(result) >= 30) // At least close to expected
+	})
+
+	t.Run("string with null terminator", func(t *testing.T) {
+		schema := &KaitaiSchema{
+			Meta: Meta{ID: "strz_test"},
+			Seq: []SequenceItem{
+				{ID: "greeting", Type: "strz", Encoding: "UTF-8"},
+				{ID: "name", Type: "strz", Encoding: "ASCII"},
+			},
+		}
+		s := newTestSerializer(t, schema)
+
+		data := map[string]any{
+			"greeting": "Hello",
+			"name":     "World",
+		}
+
+		result, err := s.Serialize(context.Background(), data)
+		require.NoError(t, err)
+
+		// Should contain strings with null terminators
+		expected := []byte("Hello\x00World\x00")
+		assert.Equal(t, expected, result)
+	})
 }

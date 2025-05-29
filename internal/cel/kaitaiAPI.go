@@ -1,6 +1,8 @@
 package cel
 
 import (
+	"bytes"
+	"compress/zlib"
 	"strings"
 
 	"github.com/google/cel-go/cel"
@@ -12,7 +14,7 @@ import (
 )
 
 // kaitaiApiFunctions returns CEL function declarations that directly use Kaitai API.
-func kaitaiApiFunctions() cel.EnvOption {
+func KaitaiApiFunctions() cel.EnvOption {
 	return cel.Lib(&kaitaiApiLib{})
 }
 
@@ -202,9 +204,42 @@ func (*kaitaiApiLib) CompileOptions() []cel.EnvOption {
 				}),
 			),
 		),
+
+		// ProcessZlibCompress - compresses data with zlib (reverse of processZlib)
+		cel.Function("processZlibCompress",
+			cel.Overload("processzlibcompress_bytes", []*cel.Type{cel.BytesType}, cel.BytesType,
+				cel.UnaryBinding(func(val ref.Val) ref.Val {
+					data, ok := val.(types.Bytes)
+					if !ok {
+						return types.NewErr("expected bytes for processZlibCompress")
+					}
+					result, err := compressZlib([]byte(data))
+					if err != nil {
+						return types.NewErr("zlib compression error: %v", err)
+					}
+					return types.Bytes(result)
+				}),
+			),
+		),
 	}
 }
 
 func (*kaitaiApiLib) ProgramOptions() []cel.ProgramOption {
 	return []cel.ProgramOption{}
+}
+
+// compressZlib compresses data using zlib (reverse of kaitai.ProcessZlib)
+func compressZlib(data []byte) ([]byte, error) {
+	var buf bytes.Buffer
+	w := zlib.NewWriter(&buf)
+	_, err := w.Write(data)
+	if err != nil {
+		w.Close()
+		return nil, err
+	}
+	err = w.Close()
+	if err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
 }

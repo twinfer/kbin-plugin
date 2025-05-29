@@ -35,7 +35,7 @@ func TestBitsSimple_Debug(t *testing.T) {
 
 	// Convert to map
 	result := ParsedDataToMap(parsed).(map[string]any)
-	
+
 	// Print all keys
 	t.Logf("Keys in result map:")
 	for key := range result {

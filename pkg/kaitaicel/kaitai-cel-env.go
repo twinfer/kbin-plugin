@@ -45,11 +45,6 @@ func CreateKaitaiCELEnvWithRegistry(enumRegistry *EnumRegistry) (*cel.Env, error
 // IntegerTypeOptions provides CEL options for integer types
 func (p *KaitaiCELProvider) IntegerTypeOptions() []cel.EnvOption {
 	return []cel.EnvOption{
-		// Register types
-		cel.Types(
-			&KaitaiInt{},
-		),
-
 		// Constructor functions
 		cel.Function("u1",
 			cel.Overload("u1_int",
@@ -149,9 +144,6 @@ func (p *KaitaiCELProvider) IntegerTypeOptions() []cel.EnvOption {
 // StringTypeOptions provides CEL options for string types
 func (p *KaitaiCELProvider) StringTypeOptions() []cel.EnvOption {
 	return []cel.EnvOption{
-		// Register type
-		cel.Types(&KaitaiString{}),
-
 		// Constructor function
 		cel.Function("kaitai_str",
 			cel.Overload("kaitai_str_bytes_string",
@@ -211,24 +203,22 @@ func (p *KaitaiCELProvider) StringTypeOptions() []cel.EnvOption {
 		),
 
 		// Comparison
-		cel.Function("_==_",
-			cel.Overload("eq_kaitai_string_string",
-				[]*cel.Type{KaitaiStringType, cel.StringType},
-				cel.BoolType,
-				cel.BinaryBinding(func(lhs, rhs ref.Val) ref.Val {
-					return lhs.(*KaitaiString).Equal(rhs)
-				}),
-			),
-		),
+		// Note: Commented out to avoid collision with standard CEL string equality
+		// cel.Function("_==_",
+		// 	cel.Overload("eq_kaitai_string_string",
+		// 		[]*cel.Type{KaitaiStringType, cel.StringType},
+		// 		cel.BoolType,
+		// 		cel.BinaryBinding(func(lhs, rhs ref.Val) ref.Val {
+		// 			return lhs.(*KaitaiString).Equal(rhs)
+		// 		}),
+		// 	),
+		// ),
 	}
 }
 
 // BytesTypeOptions provides CEL options for bytes types
 func (p *KaitaiCELProvider) BytesTypeOptions() []cel.EnvOption {
 	return []cel.EnvOption{
-		// Register type
-		cel.Types(&KaitaiBytes{}),
-
 		// Constructor
 		cel.Function("kaitai_bytes",
 			cel.Overload("kaitai_bytes_bytes",
@@ -276,6 +266,10 @@ func (p *KaitaiCELProvider) BytesTypeOptions() []cel.EnvOption {
 				}),
 			),
 		),
+
+		// Note: Comparison operators are not explicitly defined here because
+		// KaitaiBytes implements the Equal and Compare methods which CEL will use
+		// automatically through the traits.ComparerType in the type definition
 	}
 }
 

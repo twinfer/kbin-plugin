@@ -122,12 +122,12 @@ func TestASTTransformer_Transform(t *testing.T) {
 		{
 			name:        "Division",
 			kaitaiExpr:  "total / items",
-			expectedCEL: "(total / items)",
+			expectedCEL: "kaitai_div(total, items)",
 		},
 		{
 			name:        "Modulo",
 			kaitaiExpr:  "value % 2",
-			expectedCEL: "(value % 2)",
+			expectedCEL: "kaitai_mod(value, 2)",
 		},
 		{
 			name:        "Equality",
@@ -221,12 +221,12 @@ func TestASTTransformer_Transform(t *testing.T) {
 		{
 			name:        "IO Position Attribute",
 			kaitaiExpr:  "_io.pos",
-			expectedCEL: "pos(_io)",
+			expectedCEL: "io_pos(_io)",
 		},
 		{
 			name:        "IO Size Attribute",
 			kaitaiExpr:  "_io.size",
-			expectedCEL: "size(_io)",
+			expectedCEL: "io_size(_io)",
 		},
 		{
 			name:        "IO EOF Attribute",
@@ -303,10 +303,9 @@ func TestASTTransformer_Transform(t *testing.T) {
 
 		// --- Unsupported Operations ---
 		{
-			name:          "SizeOf Operator",
-			kaitaiExpr:    "sizeof(my_data)",
-			expectError:   true,
-			errorContains: "sizeof not directly supported",
+			name:        "SizeOf Operator",
+			kaitaiExpr:  "sizeof(my_data)",
+			expectedCEL: "sizeof_type(\"my_data\")",
 		},
 		{
 			name:          "AlignOf Operator",
@@ -352,8 +351,11 @@ func TestASTTransformer_Transform(t *testing.T) {
 
 			// 3. Assertions
 			if tt.expectError {
+				if transformErr == nil {
+					t.Logf("Expected error but got none. Actual CEL output: %s", actualCEL)
+				}
 				assert.Error(t, transformErr, "Expected an error during transformation")
-				if tt.errorContains != "" {
+				if tt.errorContains != "" && transformErr != nil {
 					assert.Contains(t, transformErr.Error(), tt.errorContains, "Error message mismatch")
 				}
 			} else {

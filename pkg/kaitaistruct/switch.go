@@ -37,7 +37,7 @@ func NewSwitchTypeSelector(switchType any, schema *KaitaiSchema) (*SwitchTypeSel
 			return nil, fmt.Errorf("missing 'cases' in switch definition")
 		}
 
-		// Handle cases being map[string]any or map[string]string
+		// Handle cases being map[string]any, map[string]string, or map[interface{}]interface{} (from YAML)
 		if cMapAny, ok := casesValue.(map[string]any); ok {
 			cases = make(map[string]string)
 			for k, v := range cMapAny {
@@ -49,8 +49,19 @@ func NewSwitchTypeSelector(switchType any, schema *KaitaiSchema) (*SwitchTypeSel
 			}
 		} else if cMapStr, ok := casesValue.(map[string]string); ok {
 			cases = cMapStr // Directly assign if it's already map[string]string
+		} else if cMapInterface, ok := casesValue.(map[interface{}]interface{}); ok {
+			// Handle YAML parsed cases where keys and values are interface{}
+			cases = make(map[string]string)
+			for k, v := range cMapInterface {
+				keyStr := fmt.Sprintf("%v", k) // Convert key to string
+				if typeStr, ok := v.(string); ok {
+					cases[keyStr] = typeStr
+				} else {
+					return nil, fmt.Errorf("case value must be a string, got %T", v)
+				}
+			}
 		} else {
-			return nil, fmt.Errorf("cases must be a map[string]any or map[string]string, got %T", casesValue)
+			return nil, fmt.Errorf("cases must be a map[string]any, map[string]string, or map[interface{}]interface{}, got %T", casesValue)
 		}
 
 		// Check for default case within the now-standardized `cases` map

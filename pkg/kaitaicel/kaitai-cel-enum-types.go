@@ -194,8 +194,6 @@ func (r *EnumRegistry) Get(enumName string) (map[int64]string, bool) {
 // EnumTypeOptions provides CEL options for enum types
 func EnumTypeOptions(registry *EnumRegistry) []cel.EnvOption {
 	return []cel.EnvOption{
-		cel.Types(&KaitaiEnum{}),
-
 		// Generic enum constructor
 		cel.Function("enum",
 			cel.Overload("enum_int_string",
@@ -286,14 +284,16 @@ func EnumTypeOptions(registry *EnumRegistry) []cel.EnvOption {
 		),
 
 		// Comparison with names
-		cel.Function("_==_",
-			cel.Overload("eq_enum_string",
-				[]*cel.Type{KaitaiEnumType, cel.StringType},
-				cel.BoolType,
-				cel.BinaryBinding(func(lhs, rhs ref.Val) ref.Val {
-					return lhs.(*KaitaiEnum).Equal(rhs)
-				}),
-			),
-		),
+		// Note: Commented out to avoid collision with standard CEL equality
+		// KaitaiEnum implements Equal method which CEL will use automatically
+		// cel.Function("_==_",
+		// 	cel.Overload("eq_enum_string",
+		// 		[]*cel.Type{KaitaiEnumType, cel.StringType},
+		// 		cel.BoolType,
+		// 		cel.BinaryBinding(func(lhs, rhs ref.Val) ref.Val {
+		// 			return lhs.(*KaitaiEnum).Equal(rhs)
+		// 		}),
+		// 	),
+		// ),
 	}
 }

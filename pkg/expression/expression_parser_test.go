@@ -48,6 +48,8 @@ func TestExpressionParser_Literals(t *testing.T) {
 		{"BooleanTrue", "true", &BoolLit{Value: true}},
 		{"BooleanFalse", "false", &BoolLit{Value: false}},
 		{"Null", "null", &NullLit{}},
+		{"EmptyArray", "[]", &ArrayLit{Elements: []Expr{}}},
+		{"SingleElementArray", "[1]", &ArrayLit{Elements: []Expr{&IntLit{Value: 1}}}},
 		{"HexInt", "0xCafeBabe", &IntLit{Value: 0xCafeBabe}},
 		{"OctalInt", "0o755", &IntLit{Value: 0o755}},
 		{"BinaryInt", "0b1010", &IntLit{Value: 0b1010}},
@@ -345,15 +347,15 @@ func TestExpressionParser_Errors(t *testing.T) {
 		input         string
 		errorContains string
 	}{
-		{"UnterminatedString", `"hello`, "unexpected EOF"},
-		{"UnexpectedToken", `1 2`, "unexpected token NUMBER(2) at 1:3 after NUMBER(1) at 1:1"}, // More specific now
+		{"UnterminatedString", `"hello`, "no prefix parse function for ILLEGAL"},
+		{"UnexpectedToken", `1 2`, "unexpected token NUMBER(\"2\") at 1:3 after NUMBER(\"1\") at 1:1"}, // More specific now
 		{"MissingOperand", `a +`, "no prefix parse function for EOF"},
-		{"MissingClosingParen", `(a + b`, "expected next token to be RPAREN, got EOF instead"},
-		{"MissingClosingBracket", `a[b`, "expected next token to be RBRACKET, got EOF instead"},
+		{"MissingClosingParen", `(a + b`, "expected next token to be ), got EOF"},
+		{"MissingClosingBracket", `a[b`, "expected next token to be ], got EOF"},
 		{"DotWithoutIdentifier", `a.`, "expected identifier after '.', got EOF"},
-		{"CastWithoutType", `a.as<>`, "expected type name after 'as<', got GT"},
-		{"CastUnterminated", `a.as<type`, "expected next token to be GT, got EOF"},
-		{"TernaryMissingColon", `a ? b`, "expected next token to be TERNARY_COLON, got EOF"},
+		{"CastWithoutType", `a.as<>`, "expected type name after 'as<', got >"},
+		{"CastUnterminated", `a.as<type`, "expected next token to be >, got EOF"},
+		{"TernaryMissingColon", `a ? b`, "expected next token to be :, got EOF"},
 		{"TernaryMissingFalse", `a ? b :`, "no prefix parse function for EOF"},
 	}
 

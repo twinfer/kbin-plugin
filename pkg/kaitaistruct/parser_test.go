@@ -548,10 +548,12 @@ func TestParseContext_AsActivation(t *testing.T) {
 	require.True(t, found)
 	assert.EqualValues(t, "current_common", refVal) // Current overrides parent
 
-	// Check _io
+	// Check _io (should be wrapped in KaitaiStream for CEL compatibility)
 	refVal, found = act.ResolveName("_io")
 	require.True(t, found)
-	assert.Same(t, mockIO, refVal)
+	kaitaiStream, ok := refVal.(*kaitaicel.KaitaiStream)
+	require.True(t, ok, "_io should be wrapped in KaitaiStream for CEL compatibility")
+	assert.Same(t, mockIO, kaitaiStream.GetNativeStream(), "wrapped stream should contain the original stream")
 
 	// Check _root
 	refVal, found = act.ResolveName("_root")

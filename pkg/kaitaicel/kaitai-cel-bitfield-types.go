@@ -3,6 +3,7 @@ package kaitaicel
 import (
 	"fmt"
 	"reflect"
+	"strings"
 
 	"github.com/google/cel-go/cel"
 	"github.com/google/cel-go/common/types"
@@ -123,8 +124,37 @@ func (b *KaitaiBitField) RawBytes() []byte {
 
 // Serialize returns the binary representation of this bit field
 func (b *KaitaiBitField) Serialize() []byte {
-	// Bit fields don't serialize independently - they're part of larger values
-	return nil
+	// For serialization, we need to pack the bit field value into bytes
+	// The number of bytes needed depends on the bit count
+	byteCount := (b.bits + 7) / 8 // Round up to next byte boundary
+	
+	if byteCount == 0 {
+		return []byte{}
+	}
+	
+	// Create byte array with appropriate endianness
+	result := make([]byte, byteCount)
+	value := b.value
+	
+	// Determine endianness from type name
+	isLittleEndian := strings.HasSuffix(b.typeName, "le")
+	
+	// Pack the value into bytes
+	if isLittleEndian {
+		// Little endian: least significant byte first
+		for i := 0; i < byteCount; i++ {
+			result[i] = byte(value & 0xFF)
+			value >>= 8
+		}
+	} else {
+		// Big endian (default): most significant byte first
+		for i := byteCount - 1; i >= 0; i-- {
+			result[i] = byte(value & 0xFF)
+			value >>= 8
+		}
+	}
+	
+	return result
 }
 
 func (b *KaitaiBitField) Compare(other ref.Val) ref.Val {
@@ -168,7 +198,7 @@ func NewBitReader(data []byte, bigEndian bool) *BitReader {
 // ReadBits reads n bits and returns as BitField
 func (br *BitReader) ReadBits(n int) (*KaitaiBitField, error) {
 	if n < 1 || n > 64 {
-		return nil, fmt.Errorf("can only read 1-64 bits at a time")
+		return nil, fmt.Errorf("bit count must be between 1 and 64")
 	}
 
 	var result uint64
@@ -217,8 +247,6 @@ func (br *BitReader) ReadBits(n int) (*KaitaiBitField, error) {
 // BitFieldTypeOptions provides CEL options for bit field types
 func BitFieldTypeOptions() []cel.EnvOption {
 	return []cel.EnvOption{
-		cel.Types(&KaitaiBitField{}),
-
 		// Constructor
 		cel.Function("bits",
 			cel.Overload("bits_int_int",

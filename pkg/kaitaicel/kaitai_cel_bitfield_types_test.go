@@ -76,7 +76,8 @@ func TestKaitaiBitField_InterfaceMethods(t *testing.T) {
 	bf, _ := NewKaitaiBitField(0b110, 3)
 	assert.Equal(t, "b3", bf.KaitaiTypeName())
 	assert.Nil(t, bf.RawBytes())
-	assert.Nil(t, bf.Serialize())
+	// Bit fields now support serialization - b3 (3 bits) with value 0b110 (6) should serialize to 1 byte
+	assert.Equal(t, []byte{0x06}, bf.Serialize())
 	assert.Equal(t, KaitaiBitFieldType, bf.Type())
 	assert.Same(t, bf, bf.Value())
 }
@@ -236,10 +237,10 @@ func TestBitReader_ReadBits_LittleEndian(t *testing.T) {
 	assert.Equal(t, 0, br.bytePos)
 	assert.Equal(t, 3, br.bitPos)
 
-	// Read 4 bits from 10110100 -> 1011 (11) (next 4 bits: 1,0,1,1)
+	// Read 4 bits from 10110100 -> 0110 (6) (next 4 bits: 0,1,1,0)
 	bf, err = br.ReadBits(4)
 	require.NoError(t, err)
-	assert.Equal(t, uint64(0b1011), bf.AsUint())
+	assert.Equal(t, uint64(0b0110), bf.AsUint())
 	assert.Equal(t, 4, bf.BitCount())
 	assert.Equal(t, 0, br.bytePos)
 	assert.Equal(t, 7, br.bitPos)
@@ -301,26 +302,26 @@ func TestBitReader_ReadBits_AcrossMultipleBytes_LittleEndian(t *testing.T) {
 	br := NewBitReader(data, false)
 
 	// Read 12 bits
-	// Byte 0 (0xAA = 10101010): Read 8 bits -> 01010101 (reversed)
-	// Byte 1 (0xCC = 11001100): Read 4 bits -> 0011 (reversed LSBs of 1100)
-	// Concatenated LSB-first: (0011)(01010101) = 001101010101
+	// Byte 0 (0xAA = 10101010): Read 8 bits -> 10101010
+	// Byte 1 (0xCC = 11001100): Read 4 bits -> 1100 (LSBs)
+	// Concatenated: (1100)(10101010) = 110010101010
 	bf, err := br.ReadBits(12)
 	require.NoError(t, err)
-	assert.Equal(t, uint64(0b001101010101), bf.AsUint())
+	assert.Equal(t, uint64(0b110010101010), bf.AsUint())
 	assert.Equal(t, 1, br.bytePos)
 	assert.Equal(t, 4, br.bitPos)
 
-	// Read remaining 4 bits of current byte (0xCC = 11001100, remaining LSBs after 4 are 1100) -> 0011
+	// Read remaining 4 bits of current byte (0xCC = 11001100, remaining MSBs after 4 are 1100) -> 1100
 	bf, err = br.ReadBits(4)
 	require.NoError(t, err)
-	assert.Equal(t, uint64(0b0011), bf.AsUint())
+	assert.Equal(t, uint64(0b1100), bf.AsUint())
 	assert.Equal(t, 2, br.bytePos)
 	assert.Equal(t, 0, br.bitPos)
 
-	// Read next 8 bits (0xF0 = 11110000) -> 00001111
+	// Read next 8 bits (0xF0 = 11110000) -> 11110000
 	bf, err = br.ReadBits(8)
 	require.NoError(t, err)
-	assert.Equal(t, uint64(0b00001111), bf.AsUint())
+	assert.Equal(t, uint64(0b11110000), bf.AsUint())
 	assert.Equal(t, 3, br.bytePos)
 	assert.Equal(t, 0, br.bitPos)
 }

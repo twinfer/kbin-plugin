@@ -76,6 +76,7 @@ var exprKeywords = map[string]ExpressionTokenType{
 	"sizeof":           EXPR_SIZEOF,
 	"alignof":          EXPR_ALIGNOF,
 	"as":               EXPR_AS,
+	"not":              EXPR_LOGIC_NOT, // Kaitai uses 'not' instead of '!'
 	"_":                EXPR_SELF,
 	"_io":              EXPR_IO,
 	"_parent":          EXPR_PARENT,
@@ -400,8 +401,15 @@ func (l *ExpressionLexer) NextToken() ExpressionToken {
 		tok.Type = EXPR_COMMA
 		tok.Literal = ","
 	case '"', '\'':
-		tok.Type = EXPR_STRING
+		quoteChar := l.ch
 		tok.Literal = l.readString(l.ch)
+		if tok.Literal == "" {
+			// Unterminated string
+			tok.Type = EXPR_ILLEGAL
+			tok.Literal = "unterminated string starting with " + string(quoteChar)
+		} else {
+			tok.Type = EXPR_STRING
+		}
 		// readString already consumes the closing quote and advances l.ch appropriately
 		return tok
 	case 0: // EOF
@@ -579,8 +587,10 @@ func (l *ExpressionLexer) readString(quoteChar rune) string {
 
 	if l.ch == quoteChar {
 		l.readChar() // Consume the closing quote
+		return sb.String()
 	}
-	return sb.String()
+	// Unterminated string - return empty to signal error
+	return ""
 }
 
 func isExprIdentifierStart(ch rune) bool {
